@@ -72,44 +72,44 @@ The system models a multi-vendor marketplace using **10 normalized relational ta
 
 ```mermaid
 erDiagram
-    roles ||--o{ users : "assigns"
-    users ||--o| sellers : "specializes as"
-    sellers ||--o{ stores : "owns"
-    stores ||--o{ products : "contains"
-    users ||--o{ orders : "places"
-    orders ||--o{ ordered_items : "includes"
-    products ||--o{ ordered_items : "referenced in"
-    orders ||--o| payments : "settled by"
-    sellers ||--o{ withdrawals : "requests"
-    users ||--o{ reviews : "writes"
-    products ||--o{ reviews : "receives"
+    roles ||--o{ users : assigns
+    users ||--o| sellers : specializes_as
+    sellers ||--o{ stores : owns
+    stores ||--o{ products : contains
+    users ||--o{ orders : places
+    orders ||--o{ ordered_items : includes
+    products ||--o{ ordered_items : referenced_in
+    orders ||--o| payments : settled_by
+    sellers ||--o{ withdrawals : requests
+    users ||--o{ reviews : writes
+    products ||--o{ reviews : receives
 
     roles {
-        int id PK
-        string role_name UK
+        integer id PK
+        string role_name
     }
     users {
-        int user_id PK
-        int role_id FK
+        integer user_id PK
+        integer role_id FK
         string first_name
         string last_name
-        string email UK
+        string email
         string password
         string phone
         string status
         datetime created_at
     }
     sellers {
-        int id PK
-        int user_id FK,UK
+        integer id PK
+        integer user_id FK
         string store_name
         string description
         string status
         datetime created_at
     }
     stores {
-        int id PK
-        int seller_id FK
+        integer id PK
+        integer seller_id FK
         string name
         decimal rating
         string status
@@ -117,45 +117,45 @@ erDiagram
         string address
     }
     products {
-        int id PK
-        int store_id FK
+        integer id PK
+        integer store_id FK
         string name
         decimal price
-        int stock
+        integer stock
         string description
     }
     orders {
-        int id PK
-        int user_id FK
+        integer id PK
+        integer user_id FK
         string status
         decimal total_price
     }
     ordered_items {
-        int id PK
-        int order_id FK
-        int product_id FK
-        int qty
+        integer id PK
+        integer order_id FK
+        integer product_id FK
+        integer qty
         decimal price
     }
     payments {
-        int pay_id PK
-        int order_id FK,UK
+        integer pay_id PK
+        integer order_id FK
         decimal amount
         datetime paid_at
         string pay_method
         string pay_status
     }
     withdrawals {
-        int id PK
-        int seller_id FK
+        integer id PK
+        integer seller_id FK
         decimal amount
         string status
         datetime req_at
     }
     reviews {
-        int id PK
-        int user_id FK
-        int product_id FK
+        integer id PK
+        integer user_id FK
+        integer product_id FK
         string comment
     }
 ```
