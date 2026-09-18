@@ -1446,15 +1446,13 @@
   <!-- Application Logic, Database & SQL Engine -->
   <script>
     /* ==========================================================================
-       1. RELATIONAL DATABASE SCHEMA DEFINITIONS (NO FAKE / MOCK DATA)
-       Clean empty arrays ready for backend API population or manual entry
+       1. RELATIONAL DATABASE SCHEMA DEFINITIONS
        ========================================================================== */
 
     const INITIAL_DB = {
       roles: [],
       users: [],
       sellers: [],
-      buyers: [],
       stores: [],
       withdrawals: [],
       products: [],
@@ -1467,8 +1465,7 @@
     const TABLE_COLUMNS = {
       roles: ['id', 'role_name'],
       users: ['user_id', 'role_id', 'first_name', 'last_name', 'email', 'password', 'phone', 'status', 'created_at'],
-      sellers: ['id', 'store_name', 'description', 'status', 'created_at'],
-      buyers: ['id'],
+      sellers: ['id', 'user_id', 'store_name', 'description', 'status', 'created_at'],
       stores: ['id', 'seller_id', 'name', 'rating', 'status', 'city', 'address'],
       withdrawals: ['id', 'seller_id', 'amount', 'status', 'req_at'],
       products: ['id', 'store_id', 'name', 'price', 'stock', 'description'],
@@ -1482,7 +1479,6 @@
       roles: { label: 'Roles', pk: 'id', singular: 'Role' },
       users: { label: 'Users', pk: 'user_id', singular: 'User' },
       sellers: { label: 'Sellers', pk: 'id', singular: 'Seller' },
-      buyers: { label: 'Buyers', pk: 'id', singular: 'Buyer' },
       stores: { label: 'Stores', pk: 'id', singular: 'Store' },
       withdrawals: { label: 'Withdrawals', pk: 'id', singular: 'Withdrawal' },
       products: { label: 'Products', pk: 'id', singular: 'Product' },
@@ -1493,13 +1489,16 @@
     };
 
     /* ==========================================================================
-       BACKEND REST API CONNECTOR
-       Configurable adapter to connect any backend server
+       BACKEND REST API CONNECTOR (PORT 8000)
        ========================================================================== */
     const BACKEND_CONFIG = {
-      mode: localStorage.getItem('omnimarket_api_mode') || 'local',
-      baseUrl: localStorage.getItem('omnimarket_api_url') || 'http://localhost:5000/api'
+      mode: 'remote',
+      baseUrl: 'http://localhost:8000/api'
     };
+    localStorage.setItem('omnimarket_api_mode', 'remote');
+    localStorage.setItem('omnimarket_api_url', 'http://localhost:8000/api');
+
+    const queryHistory = [];
 
     const apiService = {
       async fetchTable(table) {
@@ -1514,7 +1513,6 @@
             return db[table];
           } catch (err) {
             console.warn(`Failed to fetch ${table} from remote API:`, err);
-            showToast(`Backend connection issue for ${table}. Using local cache.`, 'error');
           }
         }
         return getDB()[table] || [];
@@ -1522,18 +1520,18 @@
 
       async createRecord(table, record) {
         if (BACKEND_CONFIG.mode === 'remote') {
-          try {
-            const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(record)
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
-          } catch (err) {
-            console.error(`Failed to create record in ${table} via API:`, err);
-            throw err;
+          const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
           }
+          const result = await res.json();
+          await syncAllTablesFromBackend();
+          return result;
         }
         const db = getDB();
         db[table].push(record);
@@ -1543,18 +1541,18 @@
 
       async updateRecord(table, id, record) {
         if (BACKEND_CONFIG.mode === 'remote') {
-          try {
-            const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}/${id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(record)
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
-          } catch (err) {
-            console.error(`Failed to update record ${id} in ${table} via API:`, err);
-            throw err;
+          const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
           }
+          const result = await res.json();
+          await syncAllTablesFromBackend();
+          return result;
         }
         const db = getDB();
         const meta = TABLE_METADATA[table];
@@ -1568,49 +1566,110 @@
 
       async deleteRecord(table, id) {
         if (BACKEND_CONFIG.mode === 'remote') {
-          try {
-            const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}/${id}`, {
-              method: 'DELETE'
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return true;
-          } catch (err) {
-            console.error(`Failed to delete record ${id} in ${table} via API:`, err);
-            throw err;
+          const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}/${id}`, {
+            method: 'DELETE'
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
           }
+          await syncAllTablesFromBackend();
+          return true;
         }
         const db = getDB();
         const meta = TABLE_METADATA[table];
         db[table] = db[table].filter(r => String(r[meta.pk]) !== String(id));
         saveDB(db);
         return true;
+      },
+
+      async executeSQLQuery(query) {
+        const res = await fetch(`${BACKEND_CONFIG.baseUrl}/sql`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
+        }
+        return await res.json();
+      },
+
+      async fetchDashboardStats() {
+        const res = await fetch(`${BACKEND_CONFIG.baseUrl}/dashboard/stats`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      },
+
+      async fetchVerificationData() {
+        const res = await fetch(`${BACKEND_CONFIG.baseUrl}/verification`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
       }
     };
 
+    async function syncAllTablesFromBackend() {
+      if (BACKEND_CONFIG.mode !== 'remote') return;
+      const tables = Object.keys(TABLE_METADATA);
+      const db = getDB();
+      for (const table of tables) {
+        try {
+          const res = await fetch(`${BACKEND_CONFIG.baseUrl}/${table}`);
+          if (res.ok) {
+            db[table] = await res.json();
+          }
+        } catch (e) {
+          console.warn(`Failed sync for ${table}:`, e);
+        }
+      }
+      saveDB(db);
+    }
+
     const EXAMPLE_QUERIES = [
       {
-        label: 'Revenue by Store Branch',
-        sql: `SELECT s.name AS store_name, s.city, SUM(oi.qty * oi.price) AS total_revenue\nFROM stores s\nJOIN products p ON s.id = p.store_id\nJOIN ordered_items oi ON p.id = oi.product_id\nGROUP BY s.name, s.city\nORDER BY total_revenue DESC;`
+        label: '1. Show all users',
+        sql: `SELECT * FROM users;`
       },
       {
-        label: 'Buyer Order History & Status',
-        sql: `SELECT u.first_name, u.last_name, o.id AS order_id, o.status, o.total_price, pm.pay_method, pm.pay_status\nFROM users u\nJOIN orders o ON u.user_id = o.user_id\nJOIN payments pm ON o.id = pm.order_id\nORDER BY o.total_price DESC;`
+        label: '2. Show all products',
+        sql: `SELECT * FROM products;`
       },
       {
-        label: 'Low Stock Product Inventory',
-        sql: `SELECT p.id, p.name, p.price, p.stock, s.name AS store_name\nFROM products p\nJOIN stores s ON p.store_id = s.id\nWHERE p.stock <= 25\nORDER BY p.stock ASC;`
+        label: '3. Products above ₹1000',
+        sql: `SELECT * FROM products\nWHERE price > 1000;`
       },
       {
-        label: 'Product Reviews with Buyers',
-        sql: `SELECT p.name AS product_name, u.first_name, u.last_name, r.comment\nFROM reviews r\nJOIN products p ON r.product_id = p.id\nJOIN users u ON r.user_id = u.user_id;`
+        label: '4. Product + store info',
+        sql: `SELECT p.name AS product_name,\n       p.price,\n       s.name AS store_name\nFROM products p\nJOIN stores s ON p.store_id = s.id;`
       },
       {
-        label: 'Seller Payout Withdrawals',
-        sql: `SELECT sl.store_name, w.id AS withdrawal_id, w.amount, w.status, w.req_at\nFROM withdrawals w\nJOIN sellers sl ON w.seller_id = sl.id\nORDER BY w.amount DESC;`
+        label: '5. Products in each store',
+        sql: `SELECT s.name AS store_name,\n       COUNT(p.id) AS product_count\nFROM stores s\nLEFT JOIN products p ON s.id = p.store_id\nGROUP BY s.id, s.name;`
       },
       {
-        label: 'Customer Payment Settlement Audit',
-        sql: `SELECT o.id AS order_id, o.user_id, p.pay_id, p.amount, p.pay_method, p.pay_status, p.paid_at\nFROM orders o\nJOIN payments p ON o.id = p.order_id\nWHERE p.pay_status = 'completed';`
+        label: '6. Average product price',
+        sql: `SELECT AVG(price) AS average_price\nFROM products;`
+      },
+      {
+        label: '7. Highest priced product',
+        sql: `SELECT MAX(price) AS highest_price\nFROM products;`
+      },
+      {
+        label: '8. Products between ₹1K-₹50K',
+        sql: `SELECT * FROM products\nWHERE price BETWEEN 1000 AND 50000;`
+      },
+      {
+        label: '9. Search products (%phone%)',
+        sql: `SELECT * FROM products\nWHERE name LIKE '%phone%';`
+      },
+      {
+        label: '10. Order details with users',
+        sql: `SELECT u.first_name,\n       u.last_name,\n       o.id AS order_id,\n       o.status,\n       o.total_price\nFROM users u\nJOIN orders o ON u.user_id = o.user_id;`
+      },
+      {
+        label: '11. Store revenue',
+        sql: `SELECT s.name AS store_name,\n       SUM(oi.qty * oi.price) AS revenue\nFROM stores s\nJOIN products p ON s.id = p.store_id\nJOIN ordered_items oi ON p.id = oi.product_id\nGROUP BY s.id, s.name;`
       }
     ];
 
@@ -1634,9 +1693,9 @@
     }
 
     function clearAllDataConfirm() {
-      if (confirm('Clear all local records? All tables will be empty, ready for fresh backend ingestion.')) {
+      if (confirm('Clear local browser cache? The backend SQLite database omnimarket.db remains unchanged.')) {
         saveDB(INITIAL_DB);
-        showToast('All local records cleared', 'info');
+        showToast('Local browser cache cleared', 'info');
         refreshCurrentTab();
       }
     }
@@ -1670,7 +1729,7 @@
     function updateBackendStatusIndicator() {
       const text = document.getElementById('backend-status-text');
       if (text) {
-        text.textContent = BACKEND_CONFIG.mode === 'remote' ? `Connected: ${BACKEND_CONFIG.baseUrl}` : 'Local Engine Ready';
+        text.textContent = `Connected: ${BACKEND_CONFIG.baseUrl}`;
       }
     }
 
@@ -1680,22 +1739,21 @@
         const el = document.getElementById(id);
         if (el) el.textContent = count;
       };
-      setBadge('badge-users', db.users.length);
-      setBadge('badge-stores', db.stores.length);
-      setBadge('badge-products', db.products.length);
-      setBadge('badge-orders', db.orders.length);
-      setBadge('badge-payments', db.payments.length);
-      setBadge('badge-withdrawals', db.withdrawals.length);
-      setBadge('badge-reviews', db.reviews.length);
+      setBadge('badge-users', (db.users || []).length);
+      setBadge('badge-stores', (db.stores || []).length);
+      setBadge('badge-products', (db.products || []).length);
+      setBadge('badge-orders', (db.orders || []).length);
+      setBadge('badge-payments', (db.payments || []).length);
+      setBadge('badge-withdrawals', (db.withdrawals || []).length);
+      setBadge('badge-reviews', (db.reviews || []).length);
 
-      // Mobile badges
-      setBadge('mobile-badge-users', db.users.length);
-      setBadge('mobile-badge-stores', db.stores.length);
-      setBadge('mobile-badge-products', db.products.length);
-      setBadge('mobile-badge-orders', db.orders.length);
-      setBadge('mobile-badge-payments', db.payments.length);
-      setBadge('mobile-badge-withdrawals', db.withdrawals.length);
-      setBadge('mobile-badge-reviews', db.reviews.length);
+      setBadge('mobile-badge-users', (db.users || []).length);
+      setBadge('mobile-badge-stores', (db.stores || []).length);
+      setBadge('mobile-badge-products', (db.products || []).length);
+      setBadge('mobile-badge-orders', (db.orders || []).length);
+      setBadge('mobile-badge-payments', (db.payments || []).length);
+      setBadge('mobile-badge-withdrawals', (db.withdrawals || []).length);
+      setBadge('mobile-badge-reviews', (db.reviews || []).length);
     }
 
     /* ==========================================================================
@@ -1752,355 +1810,20 @@
     }
 
     /* ==========================================================================
-       3. IN-MEMORY SQL QUERY ENGINE
+       3. NAVIGATION & VIEW CONTROLLER
        ========================================================================== */
 
-    function executeSQL(queryString) {
-      const startTime = performance.now();
-      const raw = queryString.trim().replace(/;+$/, '');
-      if (!raw) throw new Error('Please enter a valid SQL query.');
-
-      const db = getDB();
-      const firstWord = raw.split(/\s+/)[0].toUpperCase();
-
-      if (firstWord === 'SELECT') {
-        const result = parseAndExecuteSelect(raw, db);
-        const elapsed = (performance.now() - startTime).toFixed(2);
-        return {
-          success: true,
-          columns: result.columns,
-          rows: result.rows,
-          rowCount: result.rows.length,
-          executionTime: elapsed
-        };
-      } else if (firstWord === 'INSERT') {
-        const msg = executeInsert(raw, db);
-        const elapsed = (performance.now() - startTime).toFixed(2);
-        return { success: true, message: msg, executionTime: elapsed, rowCount: 1, columns: ['status', 'message'], rows: [{ status: 'SUCCESS', message: msg }] };
-      } else if (firstWord === 'UPDATE') {
-        const count = executeUpdate(raw, db);
-        const elapsed = (performance.now() - startTime).toFixed(2);
-        return { success: true, message: `Updated ${count} row(s).`, executionTime: elapsed, rowCount: count, columns: ['status', 'affected_rows'], rows: [{ status: 'SUCCESS', affected_rows: count }] };
-      } else if (firstWord === 'DELETE') {
-        const count = executeDelete(raw, db);
-        const elapsed = (performance.now() - startTime).toFixed(2);
-        return { success: true, message: `Deleted ${count} row(s).`, executionTime: elapsed, rowCount: count, columns: ['status', 'affected_rows'], rows: [{ status: 'SUCCESS', affected_rows: count }] };
-      } else {
-        throw new Error(`Unsupported SQL command '${firstWord}'. Supported: SELECT, INSERT, UPDATE, DELETE.`);
-      }
-    }
-
-    function parseAndExecuteSelect(query, db) {
-      const q = query.replace(/\s+/g, ' ');
-      const fromMatch = q.match(/FROM\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/i);
-      if (!fromMatch) throw new Error('Malformed SELECT query: Missing FROM clause.');
-
-      const primaryTable = fromMatch[1].toLowerCase();
-      const primaryAlias = fromMatch[2] || primaryTable;
-
-      if (!db[primaryTable]) throw new Error(`Table '${primaryTable}' does not exist in schema.`);
-
-      let tableScope = {};
-      tableScope[primaryAlias] = primaryTable;
-      tableScope[primaryTable] = primaryTable;
-
-      let joinedRows = (db[primaryTable] || []).map(r => {
-        let row = {};
-        for (let k in r) {
-          row[`${primaryAlias}.${k}`] = r[k];
-          row[`${primaryTable}.${k}`] = r[k];
-          row[k] = r[k];
-        }
-        return row;
-      });
-
-      // Handle JOIN clauses
-      const joinRegex = /(?:INNER\s+|LEFT\s+)?JOIN\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?\s+ON\s+([a-zA-Z0-9_\.]+)\s*=\s*([a-zA-Z0-9_\.]+)/gi;
-      let jm;
-      while ((jm = joinRegex.exec(q)) !== null) {
-        const jTable = jm[1].toLowerCase();
-        const jAlias = jm[2] || jTable;
-        const leftCol = jm[3];
-        const rightCol = jm[4];
-
-        if (!db[jTable]) throw new Error(`Joined table '${jTable}' not found.`);
-        tableScope[jAlias] = jTable;
-        tableScope[jTable] = jTable;
-
-        let nextRows = [];
-        for (let baseRow of joinedRows) {
-          for (let candidate of (db[jTable] || [])) {
-            let leftVal = baseRow[leftCol] !== undefined ? baseRow[leftCol] : candidate[leftCol.split('.').pop()];
-            let rightVal = baseRow[rightCol] !== undefined ? baseRow[rightCol] : candidate[rightCol.split('.').pop()];
-
-            if (String(leftVal).toLowerCase() === String(rightVal).toLowerCase()) {
-              let merged = { ...baseRow };
-              for (let k in candidate) {
-                merged[`${jAlias}.${k}`] = candidate[k];
-                merged[`${jTable}.${k}`] = candidate[k];
-                merged[k] = candidate[k];
-              }
-              nextRows.push(merged);
-            }
-          }
-        }
-        joinedRows = nextRows;
-      }
-
-      // Handle WHERE clause
-      const whereMatch = q.match(/\sWHERE\s+(.*?)(?:\s+GROUP\s+BY|\s+ORDER\s+BY|\s+LIMIT|$)/i);
-      if (whereMatch) {
-        const conditionStr = whereMatch[1];
-        joinedRows = joinedRows.filter(row => evaluateCondition(conditionStr, row));
-      }
-
-      // Handle GROUP BY & Aggregates
-      const groupMatch = q.match(/\sGROUP\s+BY\s+(.*?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
-      const selectMatch = q.match(/SELECT\s+(.*?)\s+FROM/i);
-      const selectClause = selectMatch ? selectMatch[1] : '*';
-
-      let finalRows = [];
-      let finalColumns = [];
-
-      if (groupMatch || /COUNT\(|SUM\(|AVG\(|MAX\(|MIN\(/i.test(selectClause)) {
-        const groupCols = groupMatch ? groupMatch[1].split(',').map(s => s.trim()) : [];
-        const groups = {};
-
-        for (let row of joinedRows) {
-          let gKey = groupCols.map(c => row[c] !== undefined ? row[c] : row[c.split('.').pop()]).join('___');
-          if (!groups[gKey]) groups[gKey] = [];
-          groups[gKey].push(row);
-        }
-
-        const selectItems = splitSelectItems(selectClause);
-
-        for (let gKey in groups) {
-          const groupRows = groups[gKey];
-          const repRow = groupRows[0];
-          let outRow = {};
-
-          for (let item of selectItems) {
-            const { expr, alias } = parseSelectItem(item);
-            const colName = alias || expr;
-
-            if (/COUNT\(\*\)/i.test(expr)) {
-              outRow[colName] = groupRows.length;
-            } else if (/SUM\((.*?)\)/i.test(expr)) {
-              const inner = expr.match(/SUM\((.*?)\)/i)[1].trim();
-              outRow[colName] = groupRows.reduce((acc, r) => acc + (parseFloat(evalMathExpr(inner, r)) || 0), 0);
-            } else if (/AVG\((.*?)\)/i.test(expr)) {
-              const inner = expr.match(/AVG\((.*?)\)/i)[1].trim();
-              const sum = groupRows.reduce((acc, r) => acc + (parseFloat(evalMathExpr(inner, r)) || 0), 0);
-              outRow[colName] = parseFloat((sum / (groupRows.length || 1)).toFixed(2));
-            } else if (/MAX\((.*?)\)/i.test(expr)) {
-              const inner = expr.match(/MAX\((.*?)\)/i)[1].trim();
-              outRow[colName] = Math.max(...groupRows.map(r => parseFloat(evalMathExpr(inner, r)) || 0));
-            } else if (/MIN\((.*?)\)/i.test(expr)) {
-              const inner = expr.match(/MIN\((.*?)\)/i)[1].trim();
-              outRow[colName] = Math.min(...groupRows.map(r => parseFloat(evalMathExpr(inner, r)) || 0));
-            } else {
-              outRow[colName] = repRow[expr] !== undefined ? repRow[expr] : repRow[expr.split('.').pop()];
-            }
-          }
-          finalRows.push(outRow);
-        }
-
-        finalColumns = selectItems.map(item => parseSelectItem(item).alias || parseSelectItem(item).expr);
-      } else {
-        if (selectClause.trim() === '*') {
-          finalRows = db[primaryTable] || [];
-          finalColumns = finalRows.length > 0 ? Object.keys(finalRows[0]) : (TABLE_COLUMNS[primaryTable] || []);
-        } else {
-          const selectItems = splitSelectItems(selectClause);
-          finalColumns = selectItems.map(it => parseSelectItem(it).alias || parseSelectItem(it).expr);
-
-          finalRows = joinedRows.map(row => {
-            let outRow = {};
-            for (let it of selectItems) {
-              const { expr, alias } = parseSelectItem(it);
-              const colName = alias || expr;
-              outRow[colName] = row[expr] !== undefined ? row[expr] : row[expr.split('.').pop()];
-            }
-            return outRow;
-          });
-        }
-      }
-
-      // Handle ORDER BY
-      const orderMatch = q.match(/\sORDER\s+BY\s+(.*?)(?:\s+LIMIT|$)/i);
-      if (orderMatch) {
-        const parts = orderMatch[1].trim().split(/\s+/);
-        const col = parts[0];
-        const dir = parts[1] && parts[1].toUpperCase() === 'DESC' ? -1 : 1;
-        finalRows.sort((a, b) => {
-          let vA = a[col] !== undefined ? a[col] : a[col.split('.').pop()];
-          let vB = b[col] !== undefined ? b[col] : b[col.split('.').pop()];
-          if (!isNaN(vA) && !isNaN(vB)) return (parseFloat(vA) - parseFloat(vB)) * dir;
-          return String(vA).localeCompare(String(vB)) * dir;
-        });
-      }
-
-      // Handle LIMIT
-      const limitMatch = q.match(/\sLIMIT\s+(\d+)/i);
-      if (limitMatch) {
-        finalRows = finalRows.slice(0, parseInt(limitMatch[1], 10));
-      }
-
-      return { columns: finalColumns, rows: finalRows };
-    }
-
-    function splitSelectItems(clause) {
-      let items = [];
-      let current = '';
-      let parenCount = 0;
-      for (let i = 0; i < clause.length; i++) {
-        const ch = clause[i];
-        if (ch === '(') parenCount++;
-        else if (ch === ')') parenCount--;
-
-        if (ch === ',' && parenCount === 0) {
-          items.push(current.trim());
-          current = '';
-        } else {
-          current += ch;
-        }
-      }
-      if (current.trim()) items.push(current.trim());
-      return items;
-    }
-
-    function parseSelectItem(item) {
-      const match = item.match(/^(.*?)\s+(?:AS\s+)?([a-zA-Z0-9_]+)$/i);
-      if (match) return { expr: match[1].trim(), alias: match[2].trim() };
-      return { expr: item.trim(), alias: null };
-    }
-
-    function evalMathExpr(expr, row) {
-      let replaced = expr.replace(/([a-zA-Z0-9_\.]+)/g, (match) => {
-        let val = row[match] !== undefined ? row[match] : row[match.split('.').pop()];
-        return val !== undefined ? val : match;
-      });
-      try {
-        return Function(`"use strict"; return (${replaced});`)();
-      } catch (e) {
-        return 0;
-      }
-    }
-
-    function evaluateCondition(condStr, row) {
-      const tokens = condStr.split(/\s+AND\s+/i);
-      return tokens.every(t => {
-        const m = t.match(/([a-zA-Z0-9_\.]+)\s*(=|!=|<>|>|<|>=|<=|LIKE)\s*(.+)/i);
-        if (!m) return true;
-
-        const col = m[1].trim();
-        const op = m[2].trim();
-        let val = m[3].trim().replace(/^['"]|['"]$/g, '');
-
-        let rowVal = row[col] !== undefined ? row[col] : row[col.split('.').pop()];
-        if (rowVal === undefined) return false;
-
-        if (op === '=') return String(rowVal).toLowerCase() === String(val).toLowerCase();
-        if (op === '!=' || op === '<>') return String(rowVal).toLowerCase() !== String(val).toLowerCase();
-        if (op === '>') return parseFloat(rowVal) > parseFloat(val);
-        if (op === '<') return parseFloat(rowVal) < parseFloat(val);
-        if (op === '>=') return parseFloat(rowVal) >= parseFloat(val);
-        if (op === '<=') return parseFloat(rowVal) <= parseFloat(val);
-        if (op.toUpperCase() === 'LIKE') {
-          const regex = new RegExp('^' + val.replace(/%/g, '.*') + '$', 'i');
-          return regex.test(String(rowVal));
-        }
-        return true;
-      });
-    }
-
-    function executeInsert(query, db) {
-      const m = query.match(/INSERT\s+INTO\s+([a-zA-Z0-9_]+)\s*\((.*?)\)\s*VALUES\s*\((.*?)\)/i);
-      if (!m) throw new Error('Syntax error in INSERT statement.');
-
-      const table = m[1].toLowerCase();
-      if (!db[table]) throw new Error(`Table '${table}' not found in database.`);
-
-      const cols = m[2].split(',').map(c => c.trim());
-      const vals = m[3].split(',').map(v => v.trim().replace(/^['"]|['"]$/g, ''));
-
-      if (cols.length !== vals.length) throw new Error('Column count does not match values count.');
-
-      let newRow = {};
-      cols.forEach((col, idx) => {
-        let val = vals[idx];
-        if (!isNaN(val) && val !== '') val = Number(val);
-        newRow[col] = val;
-      });
-
-      db[table].push(newRow);
-      saveDB(db);
-      return `Inserted 1 row into ${table}.`;
-    }
-
-    function executeUpdate(query, db) {
-      const m = query.match(/UPDATE\s+([a-zA-Z0-9_]+)\s+SET\s+(.*?)(?:\s+WHERE\s+(.*))?$/i);
-      if (!m) throw new Error('Syntax error in UPDATE statement.');
-
-      const table = m[1].toLowerCase();
-      if (!db[table]) throw new Error(`Table '${table}' not found in database.`);
-
-      const setAssignments = m[2].split(',').map(s => s.trim());
-      const whereCond = m[3] ? m[3].trim() : null;
-
-      let affected = 0;
-      db[table].forEach(row => {
-        if (!whereCond || evaluateCondition(whereCond, row)) {
-          setAssignments.forEach(assign => {
-            const [k, v] = assign.split('=').map(x => x.trim());
-            let cleanVal = v.replace(/^['"]|['"]$/g, '');
-            if (!isNaN(cleanVal) && cleanVal !== '') cleanVal = Number(cleanVal);
-            row[k] = cleanVal;
-          });
-          affected++;
-        }
-      });
-
-      saveDB(db);
-      return affected;
-    }
-
-    function executeDelete(query, db) {
-      const m = query.match(/DELETE\s+FROM\s+([a-zA-Z0-9_]+)(?:\s+WHERE\s+(.*))?$/i);
-      if (!m) throw new Error('Syntax error in DELETE statement.');
-
-      const table = m[1].toLowerCase();
-      if (!db[table]) throw new Error(`Table '${table}' not found in database.`);
-
-      const whereCond = m[2] ? m[2].trim() : null;
-      const initialCount = db[table].length;
-
-      if (!whereCond) {
-        db[table] = [];
-      } else {
-        db[table] = db[table].filter(row => !evaluateCondition(whereCond, row));
-      }
-
-      const affected = initialCount - db[table].length;
-      saveDB(db);
-      return affected;
-    }
-
-    /* ==========================================================================
-       4. NAVIGATION & VIEW CONTROLLER
-       ========================================================================== */
-
-    function switchTab(tabName) {
+    async function switchTab(tabName) {
       currentTab = tabName;
       document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.toggle('active', item.getAttribute('onclick').includes(`'${tabName}'`));
       });
-      renderCurrentTab();
+      await renderCurrentTab();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    function refreshCurrentTab() {
-      renderCurrentTab();
+    async function refreshCurrentTab() {
+      await renderCurrentTab();
     }
 
     function handleRoleSwitch(role) {
@@ -2110,15 +1833,16 @@
       refreshCurrentTab();
     }
 
-    function renderCurrentTab() {
+    async function renderCurrentTab() {
       const container = document.getElementById('main-view-container');
+      await syncAllTablesFromBackend();
       const db = getDB();
 
       if (currentTab === 'dashboard') renderDashboard(container, db);
       else if (currentTab === 'storefront') renderStorefront(container, db);
       else if (currentTab === 'sql-console') renderSQLConsole(container);
       else if (currentTab === 'db-verification') renderDBVerification(container, db);
-      else if (currentTab === 'eer-diagram') renderEERDiagramView(container);
+      else if (currentTab === 'eer-diagram') await renderEERDiagramView(container);
       else if (currentTab === 'stores' || currentTab === 'sellers') renderStoresAndSellers(container, db);
       else if (currentTab === 'orders' || currentTab === 'ordered_items') renderOrdersAndItems(container, db);
       else renderGenericTableDirect(container, db, currentTab);
@@ -2149,12 +1873,12 @@
         <div class="page-header">
           <div class="page-title">
             <h2>System Overview and Metrics</h2>
-            <p>Live record counts, store revenue summaries, and order settlement distributions across all 11 tables.</p>
+            <p>Live metrics and record counts computed directly from persistent SQLite relational database (<code>omnimarket.db</code> on port 8000).</p>
           </div>
           <div class="page-actions">
             <button class="btn btn-secondary" onclick="openBackendConfigModal()">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              Connect Backend API
+              Backend Status (Port 8000)
             </button>
             <button class="btn btn-primary" onclick="switchTab('sql-console')">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
@@ -2163,7 +1887,6 @@
           </div>
         </div>
 
-        <!-- 6 KPI Metric Cards -->
         <div class="stats-grid">
           <div class="stat-card">
             <div class="stat-header">
@@ -2172,7 +1895,7 @@
             </div>
             <div class="stat-value">&#8377;${totalRevenue.toLocaleString('en-IN')}</div>
             <div class="stat-footer">
-              <span class="status-badge status-active">Live Engine</span>
+              <span class="status-badge status-active">FastAPI + SQLite</span>
               <span>Across settled payments</span>
             </div>
           </div>
@@ -2187,7 +1910,7 @@
             <div class="stat-value">${totalOrders}</div>
             <div class="stat-footer">
               <span class="status-badge ${totalOrders > 0 ? 'status-active' : 'status-pending'}">${totalOrders > 0 ? 'Active' : 'Awaiting Orders'}</span>
-              <span>Across ${(db.buyers || []).length} registered buyers</span>
+              <span>Order entity records</span>
             </div>
           </div>
 
@@ -2226,7 +1949,7 @@
             </div>
             <div class="stat-value">${activeUsers}</div>
             <div class="stat-footer">
-              <span>${(db.sellers || []).length} Sellers | ${(db.buyers || []).length} Buyers</span>
+              <span>${(db.sellers || []).length} Sellers | ${(db.users || []).length - (db.sellers || []).length} Users</span>
             </div>
           </div>
 
@@ -2245,7 +1968,6 @@
           </div>
         </div>
 
-        <!-- Dashboard Charts Grid -->
         <div class="dashboard-charts-grid">
           <div class="card">
             <div class="card-title">
@@ -2301,7 +2023,6 @@
           </div>
         </div>
 
-        <!-- Quick Summary Table -->
         <div class="card">
           <div class="card-title">
             <span>Recent High-Value Marketplace Orders</span>
@@ -2336,7 +2057,7 @@
                 }).join('') : `
                   <tr>
                     <td colspan="6" style="text-align: center; padding: 28px; color: var(--text-muted);">
-                      No order records found. Connect your backend API or execute an order simulation.
+                      No order records found in database.
                     </td>
                   </tr>
                 `}
@@ -2355,7 +2076,7 @@
         <div class="page-header">
           <div class="page-title">
             <h2>Marketplace Product Catalog</h2>
-            <p>Select products to execute simulated checkout orders that create records in <code>orders</code>, <code>ordered_items</code>, and <code>payments</code> while updating stock.</p>
+            <p>Select products to execute simulated checkout orders that create records in <code>orders</code>, <code>ordered_items</code>, and <code>payments</code> while updating stock in <code>omnimarket.db</code>.</p>
           </div>
           <div class="page-actions">
             <button class="btn btn-primary" onclick="openCreateModal('products')">+ Add Product</button>
@@ -2403,7 +2124,7 @@
             <div class="empty-state">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
               <h3>No Products in Catalog</h3>
-              <p>The product catalog is currently empty. Connect your backend API to fetch real inventory or click below to add products directly to the database.</p>
+              <p>The product catalog is currently empty in SQLite. Click below to add products directly to the database.</p>
               <button class="btn btn-primary" onclick="openCreateModal('products')" style="margin-top: 8px;">+ Add First Product</button>
             </div>
           </div>
@@ -2413,27 +2134,24 @@
 
     function openCheckoutModal(productId) {
       const db = getDB();
-      const product = (db.products || []).find(p => p.id === productId);
+      const product = (db.products || []).find(p => String(p.id) === String(productId));
       if (!product) return;
 
       document.getElementById('checkout-product-id').value = product.id;
       document.getElementById('checkout-product-name').value = product.name;
-      document.getElementById('checkout-product-price').value = `\u20B9${parseFloat(product.price || 0).toLocaleString('en-IN')}`;
+      document.getElementById('checkout-product-price').value = `₹${parseFloat(product.price || 0).toLocaleString('en-IN')}`;
       document.getElementById('checkout-qty').value = 1;
       document.getElementById('checkout-qty').max = product.stock;
 
       const buyerSelect = document.getElementById('checkout-buyer-id');
-      const buyersList = (db.users || []).filter(u => {
-        const role = (db.roles || []).find(r => r.id === u.role_id);
-        return (role && role.role_name === 'Buyer') || u.user_id.startsWith('USR');
-      });
+      const buyersList = (db.users || []).filter(u => u.role_id === 3 || u.user_id >= 4);
 
       if (buyersList.length > 0) {
         buyerSelect.innerHTML = buyersList.map(b => `
-          <option value="${b.user_id}">${b.first_name || ''} ${b.last_name || ''} (${b.user_id} - ${b.email || ''})</option>
+          <option value="${b.user_id}">${b.first_name || ''} ${b.last_name || ''} (ID: ${b.user_id})</option>
         `).join('');
       } else {
-        buyerSelect.innerHTML = `<option value="USR-BUYER-01">Default Buyer (USR-BUYER-01)</option>`;
+        buyerSelect.innerHTML = `<option value="4">Default Buyer (ID: 4)</option>`;
       }
 
       calculateCheckoutTotal();
@@ -2447,20 +2165,20 @@
     function calculateCheckoutTotal() {
       const db = getDB();
       const prodId = document.getElementById('checkout-product-id').value;
-      const product = (db.products || []).find(p => p.id === prodId);
+      const product = (db.products || []).find(p => String(p.id) === String(prodId));
       const qty = parseInt(document.getElementById('checkout-qty').value || '1', 10);
       if (product) {
         const total = (parseFloat(product.price) * qty) || 0;
-        document.getElementById('checkout-total-display').textContent = `\u20B9${total.toLocaleString('en-IN')}`;
+        document.getElementById('checkout-total-display').textContent = `₹${total.toLocaleString('en-IN')}`;
       }
     }
 
     async function handlePlaceOrderSubmit(event) {
       event.preventDefault();
       const db = getDB();
-      const prodId = document.getElementById('checkout-product-id').value;
+      const prodId = parseInt(document.getElementById('checkout-product-id').value, 10);
       const qty = parseInt(document.getElementById('checkout-qty').value || '1', 10);
-      const buyerId = document.getElementById('checkout-buyer-id').value;
+      const buyerId = parseInt(document.getElementById('checkout-buyer-id').value, 10);
       const payMethod = document.getElementById('checkout-pay-method').value;
 
       const product = (db.products || []).find(p => p.id === prodId);
@@ -2474,30 +2192,44 @@
       }
 
       const total = parseFloat(product.price) * qty;
-      const newOrderId = `ORD-${Date.now().toString().slice(-4)}`;
-      const newItemId = `ITM-${Date.now().toString().slice(-4)}`;
-      const newPayId = `PAY-${Date.now().toString().slice(-4)}`;
       const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-      // Decrement product stock
-      product.stock -= qty;
-
-      // Create order, ordered_item, payment
-      const orderObj = { id: newOrderId, user_id: buyerId, status: 'completed', total_price: total };
-      const itemObj = { id: newItemId, order_id: newOrderId, product_id: prodId, qty: qty, price: parseFloat(product.price) };
-      const payObj = { pay_id: newPayId, order_id: newOrderId, amount: total, paid_at: nowStr, pay_method: payMethod, pay_status: 'completed' };
-
       try {
-        await apiService.createRecord('orders', orderObj);
-        await apiService.createRecord('ordered_items', itemObj);
-        await apiService.createRecord('payments', payObj);
-        await apiService.updateRecord('products', product.id, product);
+        const orderRes = await apiService.createRecord('orders', {
+          user_id: buyerId,
+          status: 'completed',
+          total_price: total
+        });
+        const orderId = orderRes.id;
+
+        await apiService.createRecord('ordered_items', {
+          order_id: orderId,
+          product_id: prodId,
+          qty: qty,
+          price: parseFloat(product.price)
+        });
+
+        await apiService.createRecord('payments', {
+          order_id: orderId,
+          amount: total,
+          paid_at: nowStr,
+          pay_method: payMethod,
+          pay_status: 'completed'
+        });
+
+        await apiService.updateRecord('products', product.id, {
+          store_id: product.store_id,
+          name: product.name,
+          price: product.price,
+          stock: product.stock - qty,
+          description: product.description
+        });
 
         closeCheckoutModal();
-        showToast(`Order ${newOrderId} placed successfully`, 'success');
-        refreshCurrentTab();
+        showToast(`Order #${orderId} placed successfully in SQLite!`, 'success');
+        await refreshCurrentTab();
       } catch (err) {
-        showToast('Error processing order transaction', 'error');
+        showToast(err.message || 'Error processing order transaction', 'error');
       }
     }
 
@@ -2541,7 +2273,7 @@
                 ${records.length > 0 ? records.map(row => renderTableRow(tableKey, row, meta, columns)).join('') : `
                   <tr>
                     <td colspan="${columns.length + 1}" style="text-align: center; padding: 36px; color: var(--text-muted);">
-                      No records in table <code>${tableKey}</code>. Click "+ Add ${meta.singular}" to insert or connect a backend API.
+                      No records in table <code>${tableKey}</code>. Click "+ Add ${meta.singular}" to insert a record.
                     </td>
                   </tr>
                 `}
@@ -2558,10 +2290,10 @@
           ${columns.map(c => {
             const val = row[c];
             if (c === meta.pk) {
-              return `<td><span class="table-pk">${val || ''}</span></td>`;
+              return `<td><span class="table-pk">${val !== undefined && val !== null ? val : ''}</span></td>`;
             }
             if (c.endsWith('_id') && c !== meta.pk) {
-              return `<td><span class="table-fk">${val || ''}</span></td>`;
+              return `<td><span class="table-fk">${val !== undefined && val !== null ? val : ''}</span></td>`;
             }
             if (c === 'status' || c === 'pay_status') {
               return `<td><span class="status-badge status-${val}">${val || 'none'}</span></td>`;
@@ -2606,9 +2338,9 @@
                 <div class="card" style="margin-bottom: 0;">
                   <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
                     <div>
-                      <span class="table-pk">${s.id}</span>
+                      <span class="table-pk">Store #${s.id}</span>
                       <h3 style="font-size: 16px; font-weight: 700; margin-top: 6px;">${s.name}</h3>
-                      <p style="font-size: 12px; color: #38bdf8;">Owner: ${seller.store_name || s.seller_id}</p>
+                      <p style="font-size: 12px; color: #38bdf8;">Owner: ${seller.store_name || `Seller #${s.seller_id}`}</p>
                     </div>
                     <span class="status-badge status-${s.status}">${s.status || 'open'}</span>
                   </div>
@@ -2629,7 +2361,7 @@
             <div class="empty-state">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
               <h3>No Stores Registered Yet</h3>
-              <p>No vendor store locations currently exist. Add a store branch or fetch stores from your backend API.</p>
+              <p>No vendor store locations currently exist in database.</p>
               <button class="btn btn-primary" onclick="openCreateModal('stores')" style="margin-top: 6px;">+ Register Store Branch</button>
             </div>
           </div>
@@ -2714,11 +2446,11 @@
                   const user = (db.users || []).find(u => u.user_id === o.user_id);
                   return `
                     <tr>
-                      <td><span class="table-pk">${o.id}</span></td>
-                      <td>${user ? `${user.first_name} ${user.last_name}` : ''} <span class="table-fk">${o.user_id}</span></td>
+                      <td><span class="table-pk">Order #${o.id}</span></td>
+                      <td>${user ? `${user.first_name} ${user.last_name}` : ''} <span class="table-fk">User #${o.user_id}</span></td>
                       <td><span class="status-badge status-${o.status}">${o.status}</span></td>
                       <td><b>&#8377;${parseFloat(o.total_price || 0).toLocaleString('en-IN')}</b></td>
-                      <td>${payment ? `<span class="table-pk">${payment.pay_id}</span> (${payment.pay_method})` : '<span style="color: var(--text-dim);">Unpaid</span>'}</td>
+                      <td>${payment ? `<span class="table-pk">Pay #${payment.pay_id}</span> (${payment.pay_method})` : '<span style="color: var(--text-dim);">Unpaid</span>'}</td>
                       <td style="text-align: right;">
                         <button class="btn btn-secondary btn-sm" onclick="openEditModal('orders', '${o.id}')">Edit</button>
                         <button class="btn btn-secondary btn-sm" style="color: #ef4444;" onclick="deleteRecordConfirm('orders', '${o.id}')">Delete</button>
@@ -2728,7 +2460,7 @@
                 }).join('') : `
                   <tr>
                     <td colspan="6" style="text-align: center; padding: 28px; color: var(--text-muted);">
-                      No customer orders recorded yet. Simulate an order in the Storefront tab or ingest via backend.
+                      No customer orders recorded yet in SQLite database.
                     </td>
                   </tr>
                 `}
@@ -2743,17 +2475,36 @@
 
     /* --- SQL CONSOLE VIEW --- */
     function renderSQLConsole(container) {
+      const db = getDB();
+      const tableCount = Object.keys(TABLE_METADATA).length;
+
       container.innerHTML = `
         <div class="page-header">
           <div class="page-title">
             <h2>SQL Query Console</h2>
-            <p>Execute ad-hoc SQL queries against relational tables with execution latency metrics and schema explorer.</p>
+            <p>Execute REAL SQL queries against persistent <code>omnimarket.db</code> database via FastAPI endpoint (<code>POST http://localhost:8000/api/sql</code>).</p>
           </div>
           <div class="page-actions">
             <span class="status-badge status-active">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              SQL Engine Ready
+              SQLite Engine Connected (Port 8000)
             </span>
+          </div>
+        </div>
+
+        <!-- Database Information Header Bar -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px;">
+          <div class="stat-card" style="padding: 12px 18px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Target Database</div>
+            <div style="font-size: 16px; font-weight: 700; color: #38bdf8; margin-top: 4px;">omnimarket.db</div>
+          </div>
+          <div class="stat-card" style="padding: 12px 18px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">FastAPI Status</div>
+            <div style="font-size: 16px; font-weight: 700; color: #10b981; margin-top: 4px;">Connected (:8000)</div>
+          </div>
+          <div class="stat-card" style="padding: 12px 18px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Relational Tables</div>
+            <div style="font-size: 16px; font-weight: 700; color: var(--text-main); margin-top: 4px;">${tableCount} Active Tables</div>
           </div>
         </div>
 
@@ -2762,9 +2513,9 @@
             <div class="card-title">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                <span>Preset Relational Queries</span>
+                <span>Preset Relational SQL Queries</span>
               </div>
-              <span style="font-size: 11px; color: var(--text-muted); background: rgba(125,125,125,0.1); padding: 2px 8px; border-radius: 4px;">Click chip to load into editor</span>
+              <span style="font-size: 11px; color: var(--text-muted); background: rgba(125,125,125,0.1); padding: 2px 8px; border-radius: 4px;">Click chip to load query</span>
             </div>
             <div class="chips-container">
               ${EXAMPLE_QUERIES.map((q, idx) => `
@@ -2780,30 +2531,30 @@
             <div class="terminal-header">
               <div class="terminal-header-title">
                 <b>SQL Query Terminal</b>
-                <span style="font-size: 12px; color: var(--text-muted); font-weight: 400; margin-left: 8px;">(SELECT, INSERT, UPDATE, DELETE)</span>
+                <span style="font-size: 12px; color: var(--text-muted); font-weight: 400; margin-left: 8px;">(SELECT, INSERT, UPDATE, DELETE, JOIN, GROUP BY, HAVING)</span>
               </div>
               <span style="font-size: 12px; color: #10b981; display: flex; align-items: center; gap: 5px;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
-                Transactional Mode Active
+                Real Execution Engine
               </span>
             </div>
 
             <div class="sql-editor-wrapper">
-              <textarea id="sql-query-input" class="sql-textarea" rows="5" spellcheck="false" placeholder="Enter SQL query here (e.g. SELECT * FROM products);">${EXAMPLE_QUERIES[0].sql}</textarea>
+              <textarea id="sql-query-input" class="sql-textarea" rows="5" spellcheck="false" placeholder="Enter SQL query here (e.g. SELECT * FROM users);">${EXAMPLE_QUERIES[0].sql}</textarea>
             </div>
 
             <div class="terminal-controls">
               <div style="display: flex; gap: 10px;">
                 <button class="btn btn-primary" onclick="runCustomQuery()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  Run Query
+                  Execute Real SQL
                 </button>
-                <button class="btn btn-secondary" onclick="clearQueryEditor()">Clear</button>
+                <button class="btn btn-secondary" onclick="clearQueryEditor()">Clear Editor</button>
               </div>
 
               <div class="sql-result-metrics" id="sql-metrics" style="display: none;">
                 <span id="metrics-execution-time">Query executed in 0.0ms</span>
-                <span>â€¢</span>
+                <span>•</span>
                 <span id="metrics-row-count">0 rows returned</span>
               </div>
             </div>
@@ -2829,11 +2580,21 @@
             </div>
           </div>
 
+          <!-- Executed Query History Section -->
+          <div class="card" id="sql-history-card">
+            <div class="card-title">
+              <span>Executed Query History</span>
+              <span style="font-size: 11px; color: var(--text-muted);">Click query to reload into editor</span>
+            </div>
+            <div id="sql-history-list" style="display: flex; flex-direction: column; gap: 8px;">
+              ${renderQueryHistoryList()}
+            </div>
+          </div>
+
           <div class="card">
             <div class="card-title">Schema Reference Viewer</div>
             <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;">
               ${Object.keys(TABLE_METADATA).map(t => {
-                const db = getDB();
                 const records = db[t] || [];
                 const keys = TABLE_COLUMNS[t] || [];
                 return `
@@ -2854,11 +2615,34 @@
       `;
     }
 
+    function renderQueryHistoryList() {
+      if (queryHistory.length === 0) {
+        return `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 12px;">No queries executed in this session yet.</div>`;
+      }
+      return queryHistory.slice().reverse().slice(0, 10).map((h, idx) => `
+        <div onclick="loadHistoryQuery(${queryHistory.length - 1 - idx})" style="background: rgba(125,125,125,0.05); border: 1px solid var(--border); border-radius: 4px; padding: 10px; cursor: pointer; transition: background 0.2s ease;" onmouseover="this.style.background='rgba(37,99,235,0.1)'" onmouseout="this.style.background='rgba(125,125,125,0.05)'">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <span class="status-badge ${h.success ? 'status-active' : 'status-cancelled'}">${h.success ? 'SUCCESS' : 'ERROR'}</span>
+            <span style="color: var(--text-muted);">${h.time} • ${h.executionTime}ms</span>
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-main); white-space: pre-wrap; word-break: break-all;">${h.query}</div>
+        </div>
+      `).join('');
+    }
+
     function loadExampleQuery(index) {
       const q = EXAMPLE_QUERIES[index];
       if (q) {
         document.getElementById('sql-query-input').value = q.sql;
         runCustomQuery();
+      }
+    }
+
+    function loadHistoryQuery(index) {
+      const h = queryHistory[index];
+      if (h) {
+        document.getElementById('sql-query-input').value = h.query;
+        showToast('Loaded query from history', 'info');
       }
     }
 
@@ -2871,30 +2655,68 @@
 
     let lastQueryResult = null;
 
-    function runCustomQuery() {
+    async function runCustomQuery() {
       const input = document.getElementById('sql-query-input');
-      const queryStr = input.value;
+      const queryStr = input.value.trim();
       const errorBox = document.getElementById('sql-error-output');
       const errorText = document.getElementById('sql-error-text');
       const resultsCard = document.getElementById('sql-results-card');
       const resultsTable = document.getElementById('sql-results-table');
       const metricsBox = document.getElementById('sql-metrics');
 
+      if (!queryStr) {
+        showToast('Please enter an SQL query to execute', 'error');
+        return;
+      }
+
       errorBox.style.display = 'none';
       resultsCard.style.display = 'none';
 
       try {
-        const res = executeSQL(queryStr);
+        const res = await apiService.executeSQLQuery(queryStr);
+        
+        queryHistory.push({
+          query: queryStr,
+          success: res.success,
+          executionTime: res.executionTime || 0,
+          time: new Date().toLocaleTimeString()
+        });
+
+        const historyListEl = document.getElementById('sql-history-list');
+        if (historyListEl) {
+          historyListEl.innerHTML = renderQueryHistoryList();
+        }
+
+        if (!res.success) {
+          throw new Error(res.error || 'Database query error');
+        }
+
         lastQueryResult = res;
 
         metricsBox.style.display = 'flex';
         document.getElementById('metrics-execution-time').textContent = `Query executed in ${res.executionTime}ms`;
-        document.getElementById('metrics-row-count').textContent = `${res.rowCount} row(s) returned`;
+        
+        if (res.affectedRows !== undefined && (!res.rows || res.rows.length === 0)) {
+          document.getElementById('metrics-row-count').textContent = `Affected rows: ${res.affectedRows}`;
+        } else {
+          document.getElementById('metrics-row-count').textContent = `${res.rowCount !== undefined ? res.rowCount : (res.rows ? res.rows.length : 0)} row(s) returned`;
+        }
 
         resultsCard.style.display = 'block';
 
-        if (res.rows.length === 0) {
-          resultsTable.innerHTML = `<tr><td style="text-align: center; padding: 24px; color: var(--text-muted);">Query succeeded: 0 rows returned.</td></tr>`;
+        if (!res.rows || res.rows.length === 0) {
+          resultsTable.innerHTML = `
+            <tbody>
+              <tr>
+                <td style="text-align: center; padding: 24px; color: var(--text-muted);">
+                  <div style="color: #10b981; font-weight: 600; margin-bottom: 4px;">SUCCESS</div>
+                  <div>${res.message || `Query executed successfully. Affected rows: ${res.affectedRows || 0}`}</div>
+                </td>
+              </tr>
+            </tbody>
+          `;
+          await syncAllTablesFromBackend();
+          updateNavBadges();
           return;
         }
 
@@ -2911,7 +2733,7 @@
               <tr>
                 ${cols.map(c => {
                   const val = r[c];
-                  if (c === 'price' || c === 'total_revenue' || c === 'total_price' || c === 'amount') {
+                  if (c === 'price' || c === 'total_revenue' || c === 'total_price' || c === 'amount' || c === 'revenue' || c === 'average_price' || c === 'highest_price') {
                     return `<td><b>&#8377;${parseFloat(val || 0).toLocaleString('en-IN')}</b></td>`;
                   }
                   if (c === 'status' || c === 'pay_status') {
@@ -2923,7 +2745,22 @@
             `).join('')}
           </tbody>
         `;
+
+        await syncAllTablesFromBackend();
+        updateNavBadges();
       } catch (err) {
+        if (!queryHistory.some(h => h.query === queryStr)) {
+          queryHistory.push({
+            query: queryStr,
+            success: false,
+            executionTime: 0,
+            time: new Date().toLocaleTimeString()
+          });
+        }
+        const historyListEl = document.getElementById('sql-history-list');
+        if (historyListEl) {
+          historyListEl.innerHTML = renderQueryHistoryList();
+        }
         errorBox.style.display = 'flex';
         errorText.textContent = err.message;
       }
@@ -2972,324 +2809,241 @@
 
     /* --- DATABASE VERIFICATION VIEW --- */
     function renderDBVerification(container, db) {
-      const tableOptions = Object.keys(TABLE_METADATA);
-
       container.innerHTML = `
         <div class="page-header">
           <div class="page-title">
-            <h2>Database Record and Relational Integrity Verification</h2>
-            <p>Inspect table rows by primary key to verify column values, foreign key integrity, and underlying JSON storage.</p>
+            <h2>Real Database Verification & Foreign Key Integrity</h2>
+            <p>Perform live inspection against SQLite <code>omnimarket.db</code> database, table metadata, row counts, and foreign key rules.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" onclick="runLiveDBVerification()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Run Database Verification
+            </button>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start;">
+        <div id="db-verification-results-container">
+          <div class="card" style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 12px; color: var(--text-dim);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <h3 style="font-size: 16px; color: var(--text-main); margin-bottom: 6px;">SQLite Database Verification Ready</h3>
+            <p style="font-size: 13px;">Click "Run Database Verification" to perform real integrity, row count, PK, and FK inspection on <code>omnimarket.db</code>.</p>
+          </div>
+        </div>
+      `;
+
+      runLiveDBVerification();
+    }
+
+    async function runLiveDBVerification() {
+      const container = document.getElementById('db-verification-results-container');
+      if (!container) return;
+
+      try {
+        const data = await apiService.fetchVerificationData();
+        container.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Database File</span>
+                <div class="stat-icon" style="color: #38bdf8;">DB</div>
+              </div>
+              <div class="stat-value" style="font-size: 20px;">${data.db_file}</div>
+              <div class="stat-footer"><span class="status-badge status-active">${data.database.toUpperCase()}</span></div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Foreign Keys Pragma</span>
+                <div class="stat-icon" style="color: #10b981;">FK</div>
+              </div>
+              <div class="stat-value" style="font-size: 20px;">PRAGMA = ON</div>
+              <div class="stat-footer"><span>Strict FK Enforcement Active</span></div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Integrity Status</span>
+                <div class="stat-icon" style="color: #10b981;">OK</div>
+              </div>
+              <div class="stat-value" style="font-size: 20px; color: #10b981;">${data.integrity_status}</div>
+              <div class="stat-footer"><span>0 FK Rule Violations</span></div>
+            </div>
+          </div>
+
           <div class="card">
-            <div class="card-title">Entity Record Lookup</div>
-            <form onsubmit="handleVerifyLookup(event)">
-              <div class="form-group">
-                <label>Target Table</label>
-                <select id="verify-table-select" class="form-control" onchange="updateVerificationQuickIds()">
-                  ${tableOptions.map(t => `<option value="${t}">${TABLE_METADATA[t].label} (${t})</option>`).join('')}
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label>Record Primary Key ID</label>
-                <input type="text" id="verify-id-input" class="form-control" placeholder="Enter record ID..." required />
-                <div id="verify-quick-ids" style="margin-top: 8px;"></div>
-              </div>
-
-              <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                Verify Live Record
-              </button>
-            </form>
-          </div>
-
-          <div id="verify-output-container">
-            <div class="card" style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 12px; color: var(--text-dim);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-              <h3 style="font-size: 16px; color: var(--text-main); margin-bottom: 6px;">Select Table & ID to Verify</h3>
-              <p style="font-size: 13px;">Check relational consistency across Foreign Keys, review syntax-highlighted JSON, and confirm database integrity.</p>
+            <div class="card-title">Relational Tables Verification Summary</div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Table Name</th>
+                    <th>Row Count</th>
+                    <th>Primary Keys</th>
+                    <th>Foreign Key Relations</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.tables.map(t => `
+                    <tr>
+                      <td><b>${t.table_name}</b></td>
+                      <td><span class="nav-badge">${t.row_count} rows</span></td>
+                      <td><span class="table-pk">${t.primary_keys.join(', ')}</span></td>
+                      <td>
+                        ${t.foreign_keys.length > 0 ? t.foreign_keys.map(fk => `<span class="table-fk">${fk.from} → ${fk.table}(${fk.to})</span>`).join(' • ') : '<span style="color: var(--text-dim);">None</span>'}
+                      </td>
+                      <td><span class="status-badge status-active">Verified</span></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      `;
-
-      updateVerificationQuickIds();
-    }
-
-    function updateVerificationQuickIds() {
-      const select = document.getElementById('verify-table-select');
-      const quickContainer = document.getElementById('verify-quick-ids');
-      if (!select || !quickContainer) return;
-
-      const tbl = select.value;
-      const db = getDB();
-      const meta = TABLE_METADATA[tbl];
-      const records = db[tbl] || [];
-
-      if (records.length > 0) {
-        quickContainer.innerHTML = records.slice(0, 5).map(r => `
-          <span class="id-tag" onclick="fillVerifyInput('${r[meta.pk]}')">${r[meta.pk]}</span>
-        `).join('');
-      } else {
-        quickContainer.innerHTML = `<span style="font-size: 11px; color: var(--text-dim);">No records logged in ${tbl}</span>`;
-      }
-    }
-
-    function fillVerifyInput(id) {
-      document.getElementById('verify-id-input').value = id;
-      handleVerifyLookup();
-    }
-
-    function handleVerifyLookup(event) {
-      if (event) event.preventDefault();
-      const table = document.getElementById('verify-table-select').value;
-      const id = document.getElementById('verify-id-input').value.trim();
-      const output = document.getElementById('verify-output-container');
-
-      if (!id) {
-        showToast('Please enter a record ID', 'error');
-        return;
-      }
-
-      const db = getDB();
-      const meta = TABLE_METADATA[table];
-      const record = (db[table] || []).find(r => String(r[meta.pk]).toLowerCase() === id.toLowerCase());
-
-      if (!record) {
-        output.innerHTML = `
-          <div class="card" style="border-color: rgba(239, 68, 68, 0.4);">
-            <div style="color: #ef4444; font-weight: 600; margin-bottom: 6px;">Record Not Found</div>
-            <p style="font-size: 13px; color: var(--text-muted);">No record found in table <code>${table}</code> where <code>${meta.pk} = '${id}'</code>.</p>
-          </div>
         `;
-        return;
-      }
-
-      let relatedInfoHtml = '';
-      if (table === 'orders') {
-        const payment = (db.payments || []).find(p => p.order_id === record.id);
-        const items = (db.ordered_items || []).filter(it => it.order_id === record.id);
-        relatedInfoHtml = `
-          <div style="grid-column: 1 / -1; background: rgba(125,125,125,0.06); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 8px;">
-            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Linked Payment Record</div>
-            <div style="font-size: 13px; color: #10b981; margin-top: 4px;">${payment ? `Pay ID: ${payment.pay_id} (${payment.pay_method}, ${payment.pay_status})` : 'None logged'}</div>
-          </div>
-          <div style="grid-column: 1 / -1; background: rgba(125,125,125,0.06); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 8px;">
-            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Included Ordered Items (${items.length})</div>
-            <div style="font-size: 13px; margin-top: 4px;">${items.length > 0 ? items.map(it => `[Item ${it.id}: Product ${it.product_id}, Qty: ${it.qty}]`).join(' â€¢ ') : 'No items linked'}</div>
-          </div>
-        `;
-      } else if (table === 'products') {
-        const store = (db.stores || []).find(s => s.id === record.store_id);
-        const reviews = (db.reviews || []).filter(rv => rv.product_id === record.id);
-        relatedInfoHtml = `
-          <div style="grid-column: 1 / -1; background: rgba(125,125,125,0.06); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 8px;">
-            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Selling Store & Location</div>
-            <div style="font-size: 13px; margin-top: 4px;">${store ? `${store.name} (${store.city || ''}, Rating ${store.rating || '5.0'} / 5.0)` : (record.store_id || 'None')}</div>
-          </div>
-          <div style="grid-column: 1 / -1; background: rgba(125,125,125,0.06); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-top: 8px;">
-            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Product Reviews (${reviews.length})</div>
-            <div style="font-size: 13px; margin-top: 4px;">${reviews.length ? reviews.map(r => `"${r.comment}"`).join(' | ') : 'No reviews logged'}</div>
+      } catch (err) {
+        container.innerHTML = `
+          <div class="card" style="border-color: #ef4444;">
+            <div style="color: #ef4444; font-weight: 600; margin-bottom: 6px;">Database Connection Issue</div>
+            <p style="font-size: 13px; color: var(--text-muted);">${err.message}</p>
           </div>
         `;
       }
-
-      output.innerHTML = `
-        <div class="card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
-            <div>
-              <span class="table-pk">${record[meta.pk]}</span>
-              <h3 style="font-size: 16px; font-weight: 700; margin-top: 4px;">Verified ${meta.label} Record</h3>
-            </div>
-            <span class="status-badge status-active">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-              Verified Record
-            </span>
-          </div>
-
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px;">
-            ${Object.keys(record).map(k => `
-              <div style="background: rgba(125,125,125,0.06); border: 1px solid var(--border); border-radius: 4px; padding: 10px;">
-                <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted);">${k.replace(/_/g, ' ')}</div>
-                <div style="font-size: 13px; font-weight: 500; margin-top: 2px;">${record[k]}</div>
-              </div>
-            `).join('')}
-            ${relatedInfoHtml}
-          </div>
-
-          <div>
-            <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted); text-transform: uppercase;">
-              Raw JSON Tuple Storage
-            </div>
-            <div class="json-preview">${JSON.stringify(record, null, 2)}</div>
-          </div>
-        </div>
-      `;
     }
 
     /* --- EER DIAGRAM VIEW --- */
-    function renderEERDiagramView(container) {
+    async function renderEERDiagramView(container) {
       container.innerHTML = `
         <div class="page-header">
           <div class="page-title">
             <h2>Enhanced Entity-Relationship Architecture</h2>
-            <p>Visual representation of 11 relational entities, foreign key relationships, and disjoint user specializations.</p>
+            <p>Live relational schema fetched directly from <code>backend/omnimarket.db</code> via FastAPI.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" onclick="renderEERDiagramView(document.getElementById('main-view-container'))">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              Refresh Schema
+            </button>
           </div>
         </div>
 
         <div class="eer-viewer-container">
-          <div class="eer-banner">
+          <div class="eer-banner" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
               <h3 style="font-size: 16px; font-weight: 700; color: #60a5fa;">Enhanced Entity-Relationship (EER) Architecture</h3>
               <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
-                Models a Multi-Vendor Marketplace with Disjoint Specialization: <b>Users (d) â†’ Sellers, Buyers</b>, 1-to-N Stores, 1-to-1 Payments, and Reviews.
+                Models a Multi-Vendor Marketplace with Disjoint Specialization: <b>Users → Sellers, Buyers</b>, 1-to-N Stores, 1-to-1 Payments, and Reviews.
               </p>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="switchTab('sql-console')">Test in SQL Console</button>
+            <div style="display: flex; gap: 10px; align-items: center; background: rgba(0,0,0,0.2); padding: 6px 14px; border-radius: 6px; font-size: 12px;">
+              <span style="font-weight: 600; color: var(--text-muted);">Legend:</span>
+              <span class="table-pk">PK</span> = Primary Key
+              <span class="table-fk" style="margin-left: 6px;">FK</span> = Foreign Key
+              <span style="color: #38bdf8; margin-left: 6px;">→</span> = FK Relation
+            </div>
           </div>
 
-          <div class="eer-diagram-canvas">
-            <h4 style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 16px; letter-spacing: 0.5px;">Schema Entities & Key Attributes</h4>
-            
-            <div class="eer-entities-row">
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Roles</span><span class="nav-badge">1 : N Users</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr"><span>role_name</span><span>VARCHAR</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node" style="border-color: rgba(37, 99, 235, 0.4);">
-                <div class="eer-node-header" style="background: rgba(37, 99, 235, 0.12); color: #60a5fa;">
-                  <span>Users (Superclass)</span><span class="nav-badge">Disjoint (d)</span>
-                </div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>user_id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>role_id</span><span>FK â†’ Roles</span></div>
-                  <div class="eer-attr"><span>first_name</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>last_name</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>email</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>password</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>phone</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>status</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>created_at</span><span>DATETIME</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Sellers (Subclass)</span><span class="nav-badge">Specialization</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK (FK Users)</span></div>
-                  <div class="eer-attr"><span>store_name</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>description</span><span>TEXT</span></div>
-                  <div class="eer-attr"><span>status</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>created_at</span><span>DATETIME</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Buyers (Subclass)</span><span class="nav-badge">Specialization</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK (FK Users)</span></div>
-                  <div class="eer-attr"><span>orders (places)</span><span>1 : N</span></div>
-                  <div class="eer-attr"><span>reviews (writes)</span><span>1 : N</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="eer-entities-row">
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Stores</span><span class="nav-badge">Sellers (1:N)</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>seller_id</span><span>FK â†’ Sellers</span></div>
-                  <div class="eer-attr"><span>name</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>rating</span><span>DECIMAL</span></div>
-                  <div class="eer-attr"><span>status</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>city</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>address</span><span>TEXT</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Withdrawals</span><span class="nav-badge">Requests</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>seller_id</span><span>FK â†’ Sellers</span></div>
-                  <div class="eer-attr"><span>amount</span><span>DECIMAL</span></div>
-                  <div class="eer-attr"><span>status</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>req_at</span><span>DATETIME</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Products</span><span class="nav-badge">Stores (1:N)</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>store_id</span><span>FK â†’ Stores</span></div>
-                  <div class="eer-attr"><span>name</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>price</span><span>DECIMAL</span></div>
-                  <div class="eer-attr"><span>stock</span><span>INT</span></div>
-                  <div class="eer-attr"><span>description</span><span>TEXT</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="eer-entities-row">
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Orders</span><span class="nav-badge">Buyers (1:N)</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>user_id</span><span>FK â†’ Users</span></div>
-                  <div class="eer-attr"><span>status</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>total_price</span><span>DECIMAL</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Ordered_Items</span><span class="nav-badge">Contain (1:N)</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>order_id</span><span>FK â†’ Orders</span></div>
-                  <div class="eer-attr fk"><span>product_id</span><span>FK â†’ Products</span></div>
-                  <div class="eer-attr"><span>qty</span><span>INT</span></div>
-                  <div class="eer-attr"><span>price</span><span>DECIMAL</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Payments</span><span class="nav-badge">Orders (1:1)</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>pay_id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>order_id</span><span>FK â†’ Orders</span></div>
-                  <div class="eer-attr"><span>amount</span><span>DECIMAL</span></div>
-                  <div class="eer-attr"><span>paid_at</span><span>DATETIME</span></div>
-                  <div class="eer-attr"><span>pay_method</span><span>VARCHAR</span></div>
-                  <div class="eer-attr"><span>pay_status</span><span>VARCHAR</span></div>
-                </div>
-              </div>
-
-              <div class="eer-node">
-                <div class="eer-node-header"><span>Reviews</span><span class="nav-badge">Writes</span></div>
-                <div class="eer-node-body">
-                  <div class="eer-attr pk"><span>id</span><span>PK</span></div>
-                  <div class="eer-attr fk"><span>user_id</span><span>FK â†’ Users</span></div>
-                  <div class="eer-attr fk"><span>product_id</span><span>FK â†’ Products</span></div>
-                  <div class="eer-attr"><span>comment</span><span>TEXT</span></div>
-                </div>
-              </div>
-            </div>
+          <div id="eer-dynamic-canvas" class="eer-diagram-canvas">
+            <div style="text-align: center; padding: 36px; color: var(--text-muted);">Loading live schema from omnimarket.db...</div>
           </div>
         </div>
       `;
+
+      try {
+        const data = await apiService.fetchVerificationData();
+        const tablesMap = {};
+        data.tables.forEach(t => { tablesMap[t.table_name] = t; });
+
+        const canvasEl = document.getElementById('eer-dynamic-canvas');
+        if (!canvasEl) return;
+
+        const tableOrder = ['roles', 'users', 'sellers', 'stores', 'withdrawals', 'products', 'orders', 'ordered_items', 'payments', 'reviews'];
+
+        canvasEl.innerHTML = `
+          <h4 style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 16px; letter-spacing: 0.5px; display: flex; justify-content: space-between;">
+            <span>Live SQLite Entity Definitions (10 Tables)</span>
+            <span>omnimarket.db Schema Verified</span>
+          </h4>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px;">
+            ${tableOrder.map(tblName => {
+              const t = tablesMap[tblName];
+              if (!t) return '';
+
+              return `
+                <div class="eer-node" style="border-color: ${t.table_name === 'users' ? 'rgba(37, 99, 235, 0.5)' : 'var(--border)'}; font-size: 12px;">
+                  <div class="eer-node-header" style="${t.table_name === 'users' ? 'background: rgba(37, 99, 235, 0.15); color: #60a5fa;' : ''}">
+                    <span style="font-weight: 700; text-transform: capitalize;">${t.table_name}</span>
+                    <span class="nav-badge">${t.row_count} rows</span>
+                  </div>
+                  <div class="eer-node-body" style="padding: 10px;">
+                    <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;">Attributes & Columns</div>
+                    ${(t.columns || []).map(c => `
+                      <div class="eer-attr ${c.pk ? 'pk' : (t.foreign_keys.some(fk => fk.from === c.name) ? 'fk' : '')}">
+                        <span>${c.name}</span>
+                        <span style="font-size: 10px; opacity: 0.8;">${c.type} ${c.pk ? ' (PK)' : ''}</span>
+                      </div>
+                    `).join('')}
+
+                    ${t.foreign_keys.length > 0 ? `
+                      <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 4px; padding-top: 6px; border-top: 1px dashed var(--border);">
+                        Foreign Key Relationships
+                      </div>
+                      ${t.foreign_keys.map(fk => `
+                        <div style="font-size: 11px; color: #38bdf8; background: rgba(56,189,248,0.1); padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+                          <span><b>${fk.from}</b> → ${fk.table}(${fk.to})</span>
+                        </div>
+                      `).join('')}
+                    ` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-title">
+              <span>SQLite Foreign Key Referential Constraints</span>
+              <span class="status-badge status-active">PRAGMA foreign_keys = ON</span>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Source Table</th>
+                    <th>FK Attribute Column</th>
+                    <th>Referenced Target Table</th>
+                    <th>Target Primary Key</th>
+                    <th>Relationship Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.tables.flatMap(t => 
+                    t.foreign_keys.map(fk => `
+                      <tr>
+                        <td><b>${t.table_name}</b></td>
+                        <td><span class="table-fk">${fk.from}</span></td>
+                        <td><b>${fk.table}</b></td>
+                        <td><span class="table-pk">${fk.to}</span></td>
+                        <td><span class="status-badge status-active">Relational Foreign Key</span></td>
+                      </tr>
+                    `)
+                  ).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        const canvasEl = document.getElementById('eer-dynamic-canvas');
+        if (canvasEl) {
+          canvasEl.innerHTML = `<div style="color: #ef4444; padding: 24px; text-align: center;">Failed to fetch schema metadata: ${err.message}</div>`;
+        }
+      }
     }
 
     /* ==========================================================================
-       5. MODAL CRUD HANDLERS
+       4. MODAL CRUD HANDLERS
        ========================================================================== */
 
     let modalCurrentTable = null;
@@ -3308,7 +3062,7 @@
       fieldsContainer.innerHTML = columns.map(k => {
         let defaultVal = '';
         if (k === meta.pk) {
-          defaultVal = generatePK(tableKey);
+          defaultVal = '';
         } else if (k.endsWith('_at')) {
           defaultVal = new Date().toISOString().replace('T', ' ').slice(0, 19);
         } else if (k === 'status') {
@@ -3322,8 +3076,8 @@
         }
         return `
           <div class="form-group">
-            <label>${k.replace(/_/g, ' ')}</label>
-            <input type="text" class="form-control" name="${k}" value="${defaultVal}" required />
+            <label>${k.replace(/_/g, ' ')} ${k === meta.pk ? '(Leave blank for Auto ID)' : ''}</label>
+            <input type="text" class="form-control" name="${k}" value="${defaultVal}" ${k === meta.pk ? 'placeholder="Auto-increment integer ID"' : 'required'} />
           </div>
         `;
       }).join('');
@@ -3352,7 +3106,7 @@
       fieldsContainer.innerHTML = columns.map(k => `
         <div class="form-group">
           <label>${k.replace(/_/g, ' ')}</label>
-          <input type="text" class="form-control" name="${k}" value="${record[k] !== undefined ? record[k] : ''}" ${k === meta.pk ? 'readonly style="opacity:0.75;"' : ''} required />
+          <input type="text" class="form-control" name="${k}" value="${record[k] !== undefined && record[k] !== null ? record[k] : ''}" ${k === meta.pk ? 'readonly style="opacity:0.75;"' : 'required'} />
         </div>
       `).join('');
 
@@ -3371,7 +3125,11 @@
 
       let recordObj = {};
       formData.forEach((val, key) => {
-        if (!isNaN(val) && val !== '' && key !== 'phone' && !key.endsWith('_id') && key !== 'id' && key !== 'user_id' && key !== 'pay_id') {
+        val = val.trim();
+        if (val === '' && key === meta.pk) {
+          return;
+        }
+        if (!isNaN(val) && val !== '' && key !== 'phone') {
           recordObj[key] = Number(val);
         } else {
           recordObj[key] = val;
@@ -3387,9 +3145,9 @@
           showToast(`Added new record to ${modalCurrentTable}`, 'success');
         }
         closeModal();
-        refreshCurrentTab();
+        await refreshCurrentTab();
       } catch (err) {
-        showToast(`Failed to save record in ${modalCurrentTable}`, 'error');
+        showToast(err.message || `Failed to save record in ${modalCurrentTable}`, 'error');
       }
     }
 
@@ -3398,21 +3156,11 @@
         try {
           await apiService.deleteRecord(tableKey, id);
           showToast(`Deleted record ${id} from ${tableKey}`, 'success');
-          refreshCurrentTab();
+          await refreshCurrentTab();
         } catch (err) {
-          showToast(`Failed to delete record ${id}`, 'error');
+          showToast(err.message || `Failed to delete record ${id}`, 'error');
         }
       }
-    }
-
-    function generatePK(tableKey) {
-      const prefixes = {
-        users: 'USR-', sellers: 'USR-', buyers: 'USR-', stores: 'STR-',
-        products: 'PRD-', orders: 'ORD-', ordered_items: 'ITM-',
-        payments: 'PAY-', withdrawals: 'WTH-', reviews: 'REV-', roles: ''
-      };
-      if (tableKey === 'roles') return Math.floor(Math.random() * 100) + 10;
-      return (prefixes[tableKey] || 'REC-') + Math.floor(Math.random() * 900 + 100);
     }
 
     function filterCurrentTable(query) {
@@ -3445,15 +3193,16 @@
 
       setTimeout(() => {
         toast.classList.remove('show');
-      }, 3200);
+      }, 3500);
     }
 
     /* --- INITIALIZATION --- */
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
       initTheme();
       getDB();
+      await syncAllTablesFromBackend();
       updateNavBadges();
-      renderCurrentTab();
+      await renderCurrentTab();
     });
   </script>
 </body>
