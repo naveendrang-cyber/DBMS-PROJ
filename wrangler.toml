@@ -1,0 +1,14 @@
+name = "omni-atelier"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# Cloudflare D1 Database Binding
+[[d1_databases]]
+binding = "omnimarket_db"
+database_name = "omnimarket-db"
+database_id = "11e0e656-e1ed-43ee-b523-6f1f88d5b837"
+
+# Serve Frontend static assets directly from Cloudflare Edge
+[assets]
+directory = "./frontend"
+binding = "ASSETS"
