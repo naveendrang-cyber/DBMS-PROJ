@@ -1,0 +1,18 @@
+# ==============================================================================
+# CLOUDFLARE DEPLOYMENT CONFIGURATION: DIGITAL ASSIGNMENT 3
+# Independent Cloudflare Pages / Edge deployment for DA3 Redesigned Frontend
+# ==============================================================================
+
+name = "omni-atelier-da3"
+compatibility_date = "2024-09-23"
+
+# Serve static frontend assets built by Vite
+[assets]
+directory = "./dist"
+
+# Environment Variables for Cloudflare Deployment
+[vars]
+# Point to your Java Spring Boot Backend host (e.g., Render, Railway, Fly.io, or AWS)
+# Example: BACKEND_API_URL = "https://omnimarket-backend.onrender.com"
+APP_ENV = "production"
+APP_TITLE = "OmniMarket Atelier (DA3 Distributed SQL & Java JDBC)"
