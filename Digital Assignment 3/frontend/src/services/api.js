@@ -1,6 +1,6 @@
 /**
  * OMNI ATELIER (DA3) — API SERVICE LAYER
- * Connects directly to Java Spring Boot REST API backed by Java JDBC.
+ * Calls the Cloudflare Worker API (worker/index.js), which queries CockroachDB through Hyperdrive.
  * Includes intelligent edge demo resilience for Cloudflare Pages/Edge static deployments.
  */
 
@@ -13,7 +13,7 @@ const getBaseUrl = () => {
   if (import.meta.env && import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL;
   }
-  // During local development, relative '/api' is proxied by Vite to localhost:8080
+  // Same-origin '/api' on Cloudflare; in local development Vite proxies it to the Worker (localhost:8787)
   return '/api';
 };
 
@@ -77,8 +77,8 @@ export const api = {
       status: 'offline',
       database: 'disconnected',
       engine: 'Offline catalog cache',
-      driver: 'CockroachDB (org.postgresql.Driver)',
-      message: 'Java Spring Boot backend not reachable'
+      driver: 'postgres.js via Cloudflare Hyperdrive',
+      message: 'API not reachable'
     };
   },
 
@@ -119,7 +119,7 @@ export const api = {
     return BASELINE_PRODUCTS.find(p => p.id === Number(id)) || null;
   },
 
-  // Orders (Checkout Transaction via JDBC)
+  // Orders (multi-table checkout transaction)
   async createOrder(checkoutData) {
     const res = await fetchOrNull(`${BASE_URL}/orders`, {
       method: 'POST',
@@ -128,7 +128,7 @@ export const api = {
     });
     // Successful order, or a business error (e.g. rollback on insufficient stock) to display
     if (res) return handleResponse(res);
-    console.warn("Java Spring Boot host not reachable at /api/orders, engaging Edge ACID transaction simulation.");
+    console.warn("API not reachable at /api/orders, engaging offline transaction simulation.");
 
     // Edge ACID Demo Simulation (for Cloudflare Edge static deployments)
     let grandTotal = 0;
@@ -183,7 +183,7 @@ export const api = {
     return edgeOrders.find(o => o.id === Number(id)) || null;
   },
 
-  // Dedicated Professor Database Actions (JDBC Direct)
+  // Dedicated Professor Database Actions
   async adminInsert(table, data, apiKey = '') {
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['X-Admin-Key'] = apiKey;
@@ -201,7 +201,7 @@ export const api = {
       success: true,
       table,
       id: newId,
-      message: `Record #${newId} inserted into '${table}' via PreparedStatement INSERT.`
+      message: `Record #${newId} inserted into '${table}' (offline simulation).`
     };
   },
 
@@ -221,7 +221,7 @@ export const api = {
       success: true,
       table,
       id,
-      message: `Record #${id} deleted from '${table}' via PreparedStatement DELETE.`
+      message: `Record #${id} deleted from '${table}' (offline simulation).`
     };
   },
 
@@ -241,7 +241,7 @@ export const api = {
       success: true,
       table,
       id,
-      message: `Record #${id} in '${table}' updated via PreparedStatement UPDATE.`
+      message: `Record #${id} in '${table}' updated (offline simulation).`
     };
   },
 
@@ -369,10 +369,10 @@ export const api = {
     const testOrderId = Math.floor(Math.random() * 900) + 500;
     const testUserId = 1;
     const steps = [
-      `[STEP 1] Acquired HikariCP connection. Invoked conn.setAutoCommit(false). Explicit ACID transaction boundary demarcated.`,
-      `[STEP 2] Executed PreparedStatement: INSERT INTO orders (order_id=${testOrderId}, user_id=${testUserId}, total_price=12499.00). Uncommitted in transaction buffer.`,
-      `[STEP 3] Executed PreparedStatement: INSERT INTO ordered_items (order_id=${testOrderId}, product_id=3, qty=1, price=12499.00).`,
-      `[STEP 4] Executed PreparedStatement: UPDATE products SET stock = stock - 1 WHERE id = 3. Stock decremented in transaction isolate.`
+      `[STEP 1] BEGIN: explicit ACID transaction opened (offline simulation).`,
+      `[STEP 2] INSERT INTO orders (order_id=${testOrderId}, user_id=${testUserId}, total_price=12499.00). Uncommitted in transaction buffer.`,
+      `[STEP 3] INSERT INTO ordered_items (order_id=${testOrderId}, product_id=3, qty=1, price=12499.00).`,
+      `[STEP 4] UPDATE products SET stock = stock - 1 WHERE id = 3. Stock decremented in transaction isolate.`
     ];
 
     if (shouldFail) {
@@ -386,7 +386,7 @@ export const api = {
         orderId: null
       };
     } else {
-      steps.push(`[STEP 5] Executed PreparedStatement: INSERT INTO payments (order_id=${testOrderId}, amount=12499.00, pay_method='UPI', status='completed').`);
+      steps.push(`[STEP 5] INSERT INTO payments (order_id=${testOrderId}, amount=12499.00, pay_method='UPI', status='completed').`);
       steps.push(`[STEP 6 - ATOMIC COMMIT] All operations succeeded. Invoked conn.commit(). Relational state permanently sealed in SQL database.`);
       return {
         success: true,
@@ -440,7 +440,7 @@ export const api = {
         rows,
         rowCount: rows.length,
         executionTimeMs: 1.8,
-        mode: 'JDBC PreparedStatement (Direct Execution)'
+        mode: 'Offline simulation'
       };
     }
     if (trimmed.includes('from orders')) {
@@ -455,20 +455,20 @@ export const api = {
         rows,
         rowCount: rows.length,
         executionTimeMs: 2.1,
-        mode: 'JDBC PreparedStatement (Direct Execution)'
+        mode: 'Offline simulation'
       };
     }
 
     return {
       columns: ['status', 'query_executed', 'persistence'],
-      rows: [{ status: 'SUCCESS', query_executed: query, persistence: 'Java JDBC / SQL Engine' }],
+      rows: [{ status: 'SUCCESS', query_executed: query, persistence: 'Offline simulation' }],
       rowCount: 1,
       executionTimeMs: 1.5,
-      mode: 'JDBC PreparedStatement'
+      mode: 'Offline simulation'
     };
   },
 
-  // Related products (same store first, then closest price) via CockroachDB JDBC query
+  // Related products (same store first, then closest price)
   async getRelatedProducts(productId, limit = 4) {
     try {
       const res = await fetch(`${BASE_URL}/products/${productId}/related?limit=${limit}`);

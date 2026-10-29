@@ -1,96 +1,53 @@
-# System Architecture & Technical Specification
+# System Architecture (Digital Assignment 3)
 
-## 1. Architectural Overview
+OmniMarket Atelier is a multi-vendor e-commerce platform built as three tiers:
 
-**OmniMarket Atelier (Digital Assignment 3)** is a distributed, full-stack Relational Database Management System application built with a decoupled architecture:
-
-1. **Frontend Presentation Tier:** A lightweight, high-performance web interface built with modern modular JavaScript and Vite, deployed on **Cloudflare Pages / Edge Infrastructure**.
-2. **Application & Business Logic Tier:** A **Java 17 / Spring Boot 3.3** RESTful API service running on a dedicated JVM runtime platform.
-3. **Data Access Layer:** Direct **Java JDBC (`java.sql.*`)** utilizing parameterized `PreparedStatement`, transaction demarcation with `setAutoCommit(false)`, `commit()`, and `rollback()`, managed by the **HikariCP** high-concurrency connection pool.
-4. **Relational Database Tier:** A normalized distributed schema deployed on **CockroachDB** (a local single-node cluster via `crdb-cli.cmd`, or CockroachDB Cloud).
-
----
-
-## 2. Component Architecture Diagram
+1. **Presentation tier:** a Vite-built storefront (vanilla ES modules) served as static assets by Cloudflare.
+2. **API tier:** a Cloudflare Worker (`frontend/worker/index.js`) that implements every `/api/*` endpoint with
+   parameterized SQL through the `postgres.js` driver.
+3. **Data tier:** a CockroachDB Cloud cluster (`omnimarket-da3`, GCP asia-southeast1), reached through
+   Cloudflare Hyperdrive, which pools connections close to the database. Query caching is disabled so stock
+   and order data are never stale.
 
 ```mermaid
-flowchart TD
-    subgraph Client["Client Tier"]
-        Browser["User Web Browser"]
+flowchart LR
+    subgraph Cloudflare["Cloudflare (omni-atelier-da3)"]
+        Assets["Static storefront<br/>(frontend/dist)"]
+        Worker["Worker API<br/>(worker/index.js)"]
+        Hyperdrive["Hyperdrive<br/>(pooling, no cache)"]
     end
-
-    subgraph Edge["Cloudflare Edge Network"]
-        CFPages["Cloudflare Pages / Workers<br/>(omni-atelier-da3)"]
-        DistAssets["Static Production Assets<br/>(HTML, CSS, JS Bundles)"]
+    subgraph CRDB["CockroachDB Cloud"]
+        Cluster["Cluster omnimarket-da3<br/>(Raft consensus, SERIALIZABLE MVCC)"]
     end
-
-    subgraph BackendJVM["Java JVM Runtime (Spring Boot 3.3)"]
-        Cors["WebMvc CORS Filter"]
-        Controllers["REST Controllers<br/>(/api/products, /api/orders,<br/>/api/admin, /api/advanced)"]
-        
-        subgraph JdbcLayer["Java JDBC Direct Persistence"]
-            AdminDao["AdminJdbcDao<br/>(Parameterized INSERT, DELETE, UPDATE)"]
-            OrderDao["OrderJdbcDao<br/>(Explicit ACID Transactions)"]
-            ProductDao["ProductJdbcDao<br/>(Catalog & Stock Decrement)"]
-            AdvancedDao["AdvancedDbJdbcDao<br/>(Joins, Aggregates, EXPLAIN, Rollback)"]
-            HikariPool["HikariCP Connection Pool<br/>(java.sql.Connection Management)"]
-        end
-    end
-
-    subgraph DatabaseTier["Distributed Database Layer"]
-        Cockroach["CockroachDB Cluster<br/>(Raft Consensus, Serializable MVCC)"]
-    end
-
-    Browser -->|HTTPS Request| CFPages
-    CFPages --> DistAssets
-    Browser -->|REST API / JSON| Cors
-    Cors --> Controllers
-    Controllers --> AdminDao & OrderDao & ProductDao & AdvancedDao
-    AdminDao & OrderDao & ProductDao & AdvancedDao --> HikariPool
-    HikariPool -->|PostgreSQL Wire Protocol| Cockroach
-    HikariPool -.->|Offline Mode| FallbackDb
+    Browser --> Assets
+    Browser -->|/api/*| Worker
+    Worker --> Hyperdrive -->|TLS :26257| Cluster
 ```
 
----
+## Request Flow: Checkout
 
-## 3. Layered Design & Separation of Concerns
+1. The storefront posts the cart to `POST /api/orders`.
+2. The Worker opens a transaction (`sql.begin`) and, for each line: reads price and stock, inserts the order and
+   line items, locks the product row with `SELECT ... FOR UPDATE`, and decrements stock with a guarded
+   `UPDATE ... WHERE stock >= qty`.
+3. It inserts the payment and commits. Any error rolls back the whole transaction.
+4. A SERIALIZABLE conflict (SQLSTATE `40001`) retries the transaction, up to 3 attempts.
 
-### 3.1 REST Controller Layer (`com.omnimarket.da3.controller`)
-- Exposes typed REST endpoints accepting JSON request bodies.
-- Sanitizes incoming request inputs using Jakarta Validation annotations (`@Valid`, `@NotNull`, `@NotBlank`).
-- Employs `GlobalExceptionHandler` (`@RestControllerAdvice`) to intercept exceptions, returning clean status codes (`200 OK`, `201 CREATED`, `400 BAD REQUEST`, `403 FORBIDDEN`, `404 NOT FOUND`) without exposing internal stack traces or connection strings.
+## Schema Bootstrap
 
-### 3.2 JDBC DAO Layer (`com.omnimarket.da3.dao`)
-- Strictly adheres to course requirements by utilizing standard `java.sql.*` classes directly without ORM overhead.
-- All DML and DDL operations utilize `PreparedStatement` to eliminate SQL injection vulnerabilities.
-- Handles explicit transaction lifecycles:
-  ```java
-  conn.setAutoCommit(false);
-  try {
-      // Step 1: Insert Order
-      // Step 2: Insert Items & Decrement Stock
-      // Step 3: Insert Settlement
-      conn.commit();
-  } catch (SQLException e) {
-      conn.rollback();
-      throw e;
-  }
-  ```
+`database/schema.sql` and `database/seed.sql` are bundled into the Worker. On the first request against an
+empty database the Worker creates any missing tables and seeds an empty `roles` table; both steps are
+idempotent, so an interrupted first run is completed by the next request. The same files are applied locally
+with `crdb-cli.cmd init`.
 
-### 3.3 Connection Pool (`com.zaxxer.hikari.HikariDataSource`)
-- Configured with optimal connection limits: `maximum-pool-size = 10`, `minimum-idle = 2`, `idle-timeout = 30000ms`, `connection-timeout = 15000ms`.
-- Manages connection lifecycle and validates connection health using `conn.isValid(2)`.
+## Security Boundaries
 
----
+- Bound parameters for all values; whitelisted table names; column names validated against `information_schema`.
+- Public SQL console and EXPLAIN run in a verified `READ ONLY` transaction.
+- Professor INSERT / UPDATE / DELETE require the `ADMIN_API_KEY` Worker secret.
+- Database credentials live only in the Hyperdrive configuration, never in the repository or the browser.
 
-## 4. Evaluator Feature Matrix
+## Offline Fallback
 
-| Feature | Endpoint | JDBC Implementation | Evaluation Purpose |
-| :--- | :--- | :--- | :--- |
-| **Action 1: Insert** | `POST /api/admin/insert` | `PreparedStatement.executeUpdate()` with generated keys | Dynamically inserts entity records with validation |
-| **Action 2: Delete** | `POST /api/admin/delete` | Parameterized `DELETE FROM table WHERE pk = ?` | Enforces referential integrity on delete |
-| **Action 3: Update** | `POST /api/admin/update` | Parameterized `UPDATE table SET ... WHERE pk = ?` | Updates mutable entity fields with validation |
-| **ACID Rollback Proof** | `POST /api/advanced/transaction-demo` | `conn.setAutoCommit(false)` + `conn.rollback()` | Demonstrates atomicity under constraint violations |
-| **5-Table Join** | `GET /api/advanced/joins` | Multi-table SQL `JOIN` on 5 tables | Verifies relational integrity and data assembly |
-| **Aggregates** | `GET /api/advanced/aggregates` | `GROUP BY`, `COUNT`, `SUM`, `AVG`, `ROUND` | Computes store inventory and revenue metrics |
-| **Query Plan Analysis** | `POST /api/advanced/explain` | `EXPLAIN <query>` | Demonstrates index usage vs sequential scans |
+If the API is unreachable, `src/services/api.js` serves a bundled catalog and simulated responses so the
+storefront still renders. Real API errors (validation, stock, authorization) are always shown as errors.

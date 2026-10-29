@@ -18,9 +18,9 @@ export function createAcademicSections() {
       <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px; margin-bottom:28px;">
         <div>
           <p class="section-eyebrow">03 / DBMS Academic Demonstration Suite</p>
-          <h2 class="section-headline">Distributed Relational Architecture &amp; Direct JDBC</h2>
+          <h2 class="section-headline">Distributed Relational Architecture on CockroachDB</h2>
           <p class="section-subheadline">
-            Curated evaluation panel for Course Faculty (Dr. Sobitha Ahila). Direct Java JDBC CRUD, 5-table relational joins, explicit ACID transaction rollback proofs, and interactive SQL execution.
+            Curated evaluation panel for Course Faculty (Dr. Sobitha Ahila). Parameterized SQL CRUD, 5-table relational joins, explicit ACID transaction rollback proofs, and interactive SQL execution.
           </p>
         </div>
         <div style="display:flex; gap:8px;">

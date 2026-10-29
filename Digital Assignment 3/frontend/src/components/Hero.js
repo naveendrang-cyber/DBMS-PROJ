@@ -14,8 +14,8 @@ export function createHero(onExploreClick, onSearchClick, onSpotlightQuickView) 
         <!-- Left Editorial Content Column -->
         <div class="hero-content">
           <div class="hero-badge-row">
-            <span class="badge badge-emerald">Spring Boot 3.3.5 × Java 17</span>
-            <span class="badge badge-gold">100% Direct JDBC Persistence</span>
+            <span class="badge badge-emerald">Cloudflare Workers × Hyperdrive</span>
+            <span class="badge badge-gold">CockroachDB Distributed SQL</span>
           </div>
 
           <h1 class="hero-title">
@@ -23,7 +23,7 @@ export function createHero(onExploreClick, onSearchClick, onSpotlightQuickView) 
           </h1>
 
           <p class="hero-description">
-            A bespoke multi-vendor commerce platform where uncompromising physical craftsmanship converges with distributed database architecture. Engineered with direct Java JDBC, parameterized statements, and serializable ACID transactions on CockroachDB distributed SQL.
+            A bespoke multi-vendor commerce platform where uncompromising physical craftsmanship converges with distributed database architecture. Engineered with parameterized statements, and serializable ACID transactions on CockroachDB distributed SQL.
           </p>
 
           <div class="hero-cta-group">
@@ -50,7 +50,7 @@ export function createHero(onExploreClick, onSearchClick, onSpotlightQuickView) 
               <p>Settled Volume</p>
             </div>
             <div class="hero-metric-item">
-              <h4 id="hero-stat-engine" style="color:var(--color-emerald);">100% JDBC</h4>
+              <h4 id="hero-stat-engine" style="color:var(--color-emerald);">CockroachDB</h4>
               <p>Zero-ORM Rigor</p>
             </div>
           </div>

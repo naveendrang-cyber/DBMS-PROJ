@@ -83,7 +83,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
             <div class="modal-accordion-content" id="acc-relational">
               <p>Relational Record ID: <code id="modal-sql-id">#0</code> in table <code>products</code>.</p>
               <p style="margin-top:4px;">Foreign Key: <code>store_id</code> references <code id="modal-sql-store-id">stores.id</code> with <code>ON UPDATE CASCADE ON DELETE RESTRICT</code>.</p>
-              <p style="margin-top:4px;">Direct JDBC Parameterized Statement: <code>SELECT * FROM products WHERE id = ?</code></p>
+              <p style="margin-top:4px;">Parameterized statement: <code>SELECT * FROM products WHERE id = ?</code></p>
             </div>
 
             <button class="modal-accordion-toggle" data-target="acc-shipping" style="border-top:1px solid var(--color-border); margin-top:8px;">
@@ -97,7 +97,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
         </div>
       </div>
 
-      <!-- Related Products (CockroachDB JDBC query) -->
+      <!-- Related Products (CockroachDB query) -->
       <div class="modal-similar-section">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <h4 style="font-size:0.95rem; font-weight:700; color:var(--color-midnight); display:flex; align-items:center; gap:8px;">
@@ -169,7 +169,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
     }
   });
 
-  // Load related products (same store first, then closest price) via JDBC
+  // Load related products (same store first, then closest price)
   async function loadSimilar(product) {
     const container = modal.querySelector('#modal-similar-container');
     if (!container) return;

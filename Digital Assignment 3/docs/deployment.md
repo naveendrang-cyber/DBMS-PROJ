@@ -1,145 +1,72 @@
-# Deployment & Operation Guide (Digital Assignment 3)
+# Deployment Guide (Digital Assignment 3)
 
-This guide provides the exact commands, configuration parameters, and architectural deployment procedures for **Digital Assignment 3**.
+The whole application is one Cloudflare Worker, `omni-atelier-da3`, plus a CockroachDB Cloud cluster.
 
----
+- Live site: https://omni-atelier-da3.harshzz.workers.dev
+- API health: https://omni-atelier-da3.harshzz.workers.dev/api/health
 
-## 1. Local Development Execution (Windows PowerShell)
+## 1. Database (CockroachDB Cloud)
 
-Both frontend and backend can be run simultaneously on your local development machine.
+Managed with the `ccloud` CLI (`ccloud auth login` first):
 
-### 1.1 Prerequisites Verification
-Ensure Java 17 and Node.js are available in your PowerShell session:
 ```powershell
-# Set Java & Maven in current session (if not permanently in PATH)
-$env:JAVA_HOME = "C:\Users\harsh\.tools\jdk-17"
-$env:Path = "C:\Users\harsh\.tools\jdk-17\bin;C:\Users\harsh\.tools\maven\bin;" + $env:Path
-
-# Verify tools
-java -version
-mvn -version
-node -v
-npm -v
+ccloud cluster create omnimarket-da3 --edition STANDARD --cloud GCP --region asia-southeast1 --provisioned-vcpus 2 --wait
+ccloud cluster user create omnimarket-da3 omnimarket_app -p <password>
+ccloud cluster database create omnimarket-da3 omnimarket
+ccloud cluster connection-string omnimarket-da3 --database omnimarket
 ```
 
-### 1.2 Start the Java Spring Boot Backend
-Open a PowerShell terminal and navigate to the backend directory:
-```powershell
-cd "Digital Assignment 3\backend"
+The cluster bills against the organization's credits while it exists. Delete it when it is no longer needed:
+`ccloud cluster delete omnimarket-da3`.
 
-# Run automated tests to verify JDBC connectivity
-mvn test
+## 2. Hyperdrive (one-time)
 
-# Start the Spring Boot application (Default port: 8080)
-mvn spring-boot:run
-```
-*Note: The backend expects CockroachDB on `localhost:26257` by default. Start it first with `.\crdb-cli.cmd start` (and optionally `.\crdb-cli.cmd init`) from `Digital Assignment 3/`; on first start against an empty database the backend applies the schema and seed data itself.*
-
-### 1.3 Start the Frontend Development Server
-Open a second PowerShell terminal:
 ```powershell
 cd "Digital Assignment 3\frontend"
+npx wrangler hyperdrive create omnimarket-crdb --connection-string="postgresql://omnimarket_app:<password>@<host>:26257/omnimarket" --caching-disabled
+```
 
-# Install frontend dependencies (if not already installed)
+Put the returned ID in `wrangler.toml` under `[[hyperdrive]]` (binding `HYPERDRIVE`).
+
+## 3. Admin key (one-time)
+
+```powershell
+npx wrangler secret put ADMIN_API_KEY
+```
+
+Share this key with evaluators; they enter it in the Professor Database Manager panel.
+
+## 4. Build and deploy
+
+```powershell
 npm install
-
-# Start Vite development server (Default port: 5173)
-npm run dev
+npm run deploy      # vite build && wrangler deploy
 ```
-Open your browser at `http://localhost:5173`. The Vite server automatically proxies all `/api/*` calls to the Spring Boot backend on port 8080.
 
----
+On the first request against an empty database, the Worker applies `database/schema.sql` and
+`database/seed.sql`.
 
-## 2. Cloudflare Frontend Deployment
+## 5. Verify
 
-The redesigned frontend is engineered to build into static assets and deploy independently on **Cloudflare Pages** or **Cloudflare Workers**.
-
-### 2.1 Build Production Bundle
 ```powershell
-cd "Digital Assignment 3\frontend"
-npm run build
-```
-This generates the optimized production bundle inside `Digital Assignment 3/frontend/dist/`.
-
-### 2.2 Deploy via Wrangler (Cloudflare)
-Ensure Wrangler is authenticated (`npx wrangler login`):
-```powershell
-# Deploy as a separate Cloudflare project (omni-atelier-da3)
-npx wrangler pages deploy dist --project-name omni-atelier-da3
-```
-*Notice: Using `--project-name omni-atelier-da3` guarantees that your existing DA2 production deployment (`omni-atelier`) is never modified or overwritten.*
-
-### 2.3 Set Backend URL on Cloudflare
-If deploying the frontend on Cloudflare Pages and pointing to a hosted Java backend, set the environment variable:
-```bash
-VITE_API_BASE_URL = "https://your-java-backend-host.com/api"
+curl https://omni-atelier-da3.harshzz.workers.dev/api/health
 ```
 
----
+Expected response:
 
-## 3. Java Backend Deployment Architecture
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "engine": "CockroachDB",
+  "version": "CockroachDB CCL v26.2.9 (...)",
+  "driver": "postgres.js via Cloudflare Hyperdrive",
+  "framework": "Cloudflare Workers"
+}
+```
 
-### 3.1 Architectural Constraint
-Standard Cloudflare Workers execute inside a V8 JavaScript isolates environment and **do not support the Java Virtual Machine (JVM)** or standard C-based network sockets required by JDBC drivers (`org.postgresql.Driver`). Therefore, the Java Spring Boot application must run on a platform that natively supports JVM runtimes.
+## Notes
 
-### 3.2 Recommended JVM Hosting Platforms
-
-#### Option A: Render (Fastest & Free Tier Available)
-1. Create a New **Web Service** on [render.com](https://render.com).
-2. Point to your repository branch `Harsh2`.
-3. Root Directory: `Digital Assignment 3/backend`
-4. Runtime: `Java` (or `Docker`)
-5. Build Command: `mvn clean package -DskipTests`
-6. Start Command: `java -jar target/omnimarket-da3-backend-1.0.0.jar`
-7. Set Environment Variables:
-   - `PORT`: `8080`
-   - `DB_URL`: `jdbc:postgresql://<user>:<password>@<cockroachdb-host>:26257/<database>?sslmode=verify-full`
-   - `CORS_ALLOWED_ORIGINS`: `https://omni-atelier-da3.pages.dev`
-   - `ADMIN_API_KEY`: `omni-admin-secret-da3`
-
-#### Option B: Railway / Fly.io / AWS Elastic Beanstalk
-A standard `Dockerfile` or native Maven buildpack will run the JAR artifact with zero modifications.
-
----
-
-## 4. Configuration Reference
-
-| Parameter | Environment Variable | Example Value | Description |
-| :--- | :--- | :--- | :--- |
-| Server Port | `PORT` | `8080` | Port for incoming HTTP requests |
-| Database JDBC URL | `DB_URL` | `jdbc:postgresql://localhost:26257/omnimarket?sslmode=disable` | CockroachDB connection URL (local or Cloud) |
-| Database User | `DB_USER` | `harsh` | Database authentication username |
-| Database Password | `DB_PASSWORD` | `********` | Database authentication password |
-| Allowed CORS | `CORS_ALLOWED_ORIGINS` | `https://*.pages.dev,http://localhost:5173` | Origins allowed to make API calls |
-| Admin Security Key | `ADMIN_API_KEY` | `omni-admin-secret-da3` | Required key for Professor Insert/Delete/Update actions |
-
----
-
-## 5. Diagnostic & Health-Check Endpoints
-
-1. **System Health & JDBC Verification:**
-   ```bash
-   GET /api/health
-   ```
-   Returns:
-   ```json
-   {
-     "status": "ok",
-     "database": "connected",
-     "engine": "CockroachDB",
-     "version": "CockroachDB CCL v24.2.4 (...)",
-     "driver": "PostgreSQL JDBC Driver (42.7.4)",
-     "framework": "Java Spring Boot + Direct JDBC"
-   }
-   ```
-
-2. **Dashboard Metric Summary:**
-   ```bash
-   GET /api/dashboard/stats
-   ```
-
-3. **ACID Transaction & Rollback Proof:**
-   ```bash
-   POST /api/advanced/transaction-demo
-   Body: { "shouldFail": true }
-   ```
+- The DA2 deployment (`omni-atelier`, Cloudflare D1) is a separate Worker and is not affected.
+- Outbound port 26257 is blocked on some networks (e.g. campus Wi-Fi). This only affects direct CLI access
+  from that machine; Cloudflare connects to the cluster independently.

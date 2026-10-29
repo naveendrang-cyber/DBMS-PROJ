@@ -38,7 +38,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
     if (dbHealth && dbHealth.database === 'connected') {
       pill.innerHTML = `
         <span class="pulse-dot"></span>
-        <span>${dbHealth.engine || 'CockroachDB'}: <strong>live</strong> (${allEnrichedProducts.length} products via JDBC)</span>
+        <span>${dbHealth.engine || 'CockroachDB'}: <strong>live</strong> (${allEnrichedProducts.length} products live)</span>
       `;
       pill.className = 'badge badge-success';
     } else {
@@ -98,7 +98,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
             <p class="section-eyebrow">02 / The Atelier Catalog</p>
             <h2 class="section-headline">Curated Artifacts &amp; Rare Curations</h2>
             <p class="section-subheadline">
-              Sourced from certified artisan workshops with 100% verified relational stock balances powered by Java JDBC and CockroachDB.
+              Sourced from certified artisan workshops with 100% verified relational stock balances powered by CockroachDB distributed SQL.
             </p>
           </div>
           <div style="display:flex; align-items:center; gap:10px;">

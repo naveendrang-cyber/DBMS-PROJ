@@ -4,7 +4,7 @@
  * 1. Insert
  * 2. Delete
  * 3. Update
- * Connected directly to Java backend via JDBC PreparedStatement.
+ * Backed by the Cloudflare Worker API with parameterized CockroachDB statements.
  */
 
 import { api } from '../services/api.js';
@@ -18,7 +18,7 @@ export function createProfessorDbManager() {
   let currentAction = 'none'; // 'insert', 'delete', 'update'
   let tableColumns = [];
   let tableRecords = [];
-  let adminApiKey = 'omni-admin-secret-da3';
+  let adminApiKey = '';
 
   section.innerHTML = `
     <div class="container">
@@ -26,7 +26,7 @@ export function createProfessorDbManager() {
         <p class="section-label">Faculty Evaluation Module</p>
         <h2 class="section-title">Database Management Interface</h2>
         <p class="section-desc">
-          Evaluator interface connected directly to the Java Spring Boot backend. Every action is executed via <code>java.sql.PreparedStatement</code> and standard JDBC drivers.
+          Evaluator interface backed by the Cloudflare Worker API. Every action runs as a parameterized statement on CockroachDB; column names are validated against the live schema.
         </p>
       </div>
 
@@ -51,20 +51,20 @@ export function createProfessorDbManager() {
 
           <!-- THE EXACT THREE PRIMARY ACTION BUTTONS IN STRICT REQUIRED ORDER -->
           <div class="primary-action-buttons">
-            <button id="btn-action-insert" class="btn btn-action-insert" title="Execute Parameterized JDBC INSERT">
+            <button id="btn-action-insert" class="btn btn-action-insert" title="Execute Parameterized INSERT">
               1. Insert
             </button>
-            <button id="btn-action-delete" class="btn btn-action-delete" title="Execute Parameterized JDBC DELETE">
+            <button id="btn-action-delete" class="btn btn-action-delete" title="Execute Parameterized DELETE">
               2. Delete
             </button>
-            <button id="btn-action-update" class="btn btn-action-update" title="Execute Parameterized JDBC UPDATE">
+            <button id="btn-action-update" class="btn btn-action-update" title="Execute Parameterized UPDATE">
               3. Update
             </button>
           </div>
 
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-size:0.75rem; color:var(--color-text-muted);">Admin Auth:</span>
-            <input type="password" id="admin-api-key-input" class="form-input" style="padding:6px 10px; width:140px; font-size:0.75rem;" value="${adminApiKey}" placeholder="API Key" />
+            <input type="password" id="admin-api-key-input" class="form-input" style="padding:6px 10px; width:140px; font-size:0.75rem;" value="${adminApiKey}" placeholder="Admin key" />
           </div>
         </div>
 
@@ -77,9 +77,9 @@ export function createProfessorDbManager() {
         <div id="panel-insert" class="mutation-form-panel">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h4 style="font-family:var(--font-serif); font-size:1.35rem; color:var(--color-midnight);">
-              Action 1: Parameterized JDBC INSERT &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
+              Action 1: Parameterized INSERT &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
             </h4>
-            <span class="badge badge-emerald">PreparedStatement.executeUpdate()</span>
+            <span class="badge badge-emerald">Parameterized Statement</span>
           </div>
           <form id="form-insert">
             <div id="insert-fields-grid" class="form-grid"></div>
@@ -94,7 +94,7 @@ export function createProfessorDbManager() {
         <div id="panel-delete" class="mutation-form-panel">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h4 style="font-family:var(--font-serif); font-size:1.35rem; color:var(--color-error);">
-              Action 2: Parameterized JDBC DELETE &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
+              Action 2: Parameterized DELETE &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
             </h4>
             <span class="badge badge-error">Referential Integrity Enforced</span>
           </div>
@@ -117,9 +117,9 @@ export function createProfessorDbManager() {
         <div id="panel-update" class="mutation-form-panel">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h4 style="font-family:var(--font-serif); font-size:1.35rem; color:var(--color-gold);">
-              Action 3: Parameterized JDBC UPDATE &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
+              Action 3: Parameterized UPDATE &mdash; Table: <span class="table-name-badge serif">${selectedTable}</span>
             </h4>
-            <span class="badge badge-gold">PreparedStatement.executeUpdate()</span>
+            <span class="badge badge-gold">Parameterized Statement</span>
           </div>
           <div class="form-group" style="margin-bottom:16px;">
             <label class="form-label">Select Existing Record to Update:</label>
@@ -326,14 +326,14 @@ export function createProfessorDbManager() {
       const resp = await api.adminInsert(selectedTable, payload, adminApiKey);
       showBanner(
         'success',
-        'Action 1 (INSERT) Executed Successfully via JDBC',
+        'Action 1 (INSERT) Executed Successfully on CockroachDB',
         resp.message,
         `<span>Target Table: <strong>${selectedTable}</strong></span> · <span>Generated ID: <strong>${resp.id}</strong></span> · <span>Affected: <strong>${resp.affectedRows} row</strong></span> · <span>Time: <strong>${resp.executionTimeMs} ms</strong></span>`
       );
       hideAllPanels();
       await loadTableData();
     } catch (err) {
-      showBanner('error', 'JDBC INSERT Failed', err.message);
+      showBanner('error', 'INSERT Failed', err.message);
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Execute Parameterized INSERT';
@@ -402,14 +402,14 @@ export function createProfessorDbManager() {
       const resp = await api.adminDelete(selectedTable, id, adminApiKey);
       showBanner(
         'success',
-        'Action 2 (DELETE) Executed Successfully via JDBC',
+        'Action 2 (DELETE) Executed Successfully on CockroachDB',
         resp.message,
         `<span>Target Table: <strong>${selectedTable}</strong></span> · <span>Deleted Key: <strong>${id}</strong></span> · <span>Affected: <strong>${resp.affectedRows} row</strong></span> · <span>Time: <strong>${resp.executionTimeMs} ms</strong></span>`
       );
       hideAllPanels();
       await loadTableData();
     } catch (err) {
-      showBanner('error', 'JDBC DELETE Rejected (Constraint Guard)', err.message);
+      showBanner('error', 'DELETE Rejected (Constraint Guard)', err.message);
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Confirm Parameterized DELETE';
@@ -512,14 +512,14 @@ export function createProfessorDbManager() {
       const resp = await api.adminUpdate(selectedTable, id, payload, adminApiKey);
       showBanner(
         'success',
-        'Action 3 (UPDATE) Executed Successfully via JDBC',
+        'Action 3 (UPDATE) Executed Successfully on CockroachDB',
         resp.message,
         `<span>Target Table: <strong>${selectedTable}</strong></span> · <span>Updated Key: <strong>${id}</strong></span> · <span>Affected: <strong>${resp.affectedRows} row</strong></span> · <span>Time: <strong>${resp.executionTimeMs} ms</strong></span>`
       );
       hideAllPanels();
       await loadTableData();
     } catch (err) {
-      showBanner('error', 'JDBC UPDATE Failed', err.message);
+      showBanner('error', 'UPDATE Failed', err.message);
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Execute Parameterized UPDATE';

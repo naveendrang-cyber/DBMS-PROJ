@@ -158,7 +158,7 @@ async function initApp() {
 
   updateCartUI();
 
-  // Load live data from Java Spring Boot backend
+  // Load live data from the Worker API
   await checkHealth();
   await fetchInitialData();
 }
@@ -194,13 +194,13 @@ async function checkHealth() {
     badge.className = 'badge badge-success';
     badge.title = `Engine: ${health.engine} | Driver: ${health.driver}`;
     if (dot) dot.className = 'pulse-dot';
-    text.textContent = `JDBC: ${health.engine || 'Connected'}`;
-    if (engineInd) engineInd.textContent = `ENGINE: ${health.engine?.toUpperCase() || 'COCKROACHDB'} (100% DIRECT JDBC)`;
+    text.textContent = `DB: ${health.engine || 'Connected'}`;
+    if (engineInd) engineInd.textContent = `ENGINE: ${health.engine?.toUpperCase() || 'COCKROACHDB'} CLOUD`;
   } catch (err) {
     badge.className = 'badge badge-gold';
     badge.title = `Backend connection notice: Using offline fallback cache`;
     if (dot) dot.className = 'pulse-dot amber';
-    text.textContent = 'JDBC: Local Offline Cache';
+    text.textContent = 'DB: Offline Cache';
   }
 }
 

@@ -1,8 +1,8 @@
 # Database Schema & Seed Data (Digital Assignment 3)
 
 This directory holds the **CockroachDB** DDL and seed data. These two files are the single source of truth:
-`crdb-cli.cmd init` applies them with the CockroachDB CLI, and the Spring Boot backend packages the same
-files onto its classpath and applies them on first start against an empty database.
+`crdb-cli.cmd init` applies them with the CockroachDB CLI, and the Cloudflare Worker bundles the same files
+and applies them on first request against an empty database.
 
 ## Directory Layout
 
@@ -32,7 +32,7 @@ To target CockroachDB Cloud instead of the local node, set `CRDB_URL` to the clu
   non-sequential 64-bit IDs. Explicit sequences keep order numbers readable (1, 2, 3 ...). CockroachDB prints a
   NOTICE that sequential keys can create write hotspots; at this catalog size that trade-off is deliberate.
 - **SERIALIZABLE isolation:** CockroachDB's default. Conflicting checkouts receive SQLSTATE `40001` and are
-  retried by `OrderJdbcDao`.
+  retried by the Worker's checkout (`frontend/worker/index.js`).
 - **`SELECT ... FOR UPDATE`:** stock rows are locked during checkout so concurrent orders queue instead of
   over-selling.
 - **`STORING` index:** `idx_products_store_id` stores `name, price, stock` so per-store catalog reads are

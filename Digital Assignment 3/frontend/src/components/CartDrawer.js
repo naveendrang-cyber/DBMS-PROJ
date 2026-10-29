@@ -1,6 +1,6 @@
 /**
  * OMNI ATELIER — CART DRAWER & ACID CHECKOUT MODAL
- * Slide-out luxury shopping bag with real-time price updates and explicit ACID JDBC transaction execution.
+ * Slide-out luxury shopping bag with real-time price updates and explicit ACID transaction execution on CockroachDB.
  */
 
 export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheckout) {
@@ -49,7 +49,7 @@ export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheck
           Proceed to Order Settlement →
         </button>
         <p style="text-align:center; font-size:0.6875rem; color:var(--color-text-muted); margin-top:10px; font-family:var(--font-mono);">
-          Multi-table JDBC transaction with explicit setAutoCommit(false)
+          Multi-table SERIALIZABLE transaction (BEGIN ... COMMIT)
         </p>
       </div>
     </aside>
@@ -100,7 +100,7 @@ export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheck
           <div style="display:flex; justify-content:flex-end; gap:12px;">
             <button type="button" id="cancel-checkout-btn" class="btn btn-outline">Cancel</button>
             <button type="submit" id="submit-order-btn" class="btn btn-emerald">
-              Commit via Java JDBC
+              Commit to CockroachDB
             </button>
           </div>
         </form>
@@ -164,7 +164,7 @@ export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheck
 
     statusMsg.style.display = 'none';
     submitBtn.disabled = false;
-    submitBtn.textContent = 'Commit via Java JDBC';
+    submitBtn.textContent = 'Commit to CockroachDB';
 
     checkoutModal.classList.add('open');
   }
@@ -181,14 +181,14 @@ export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheck
     if (e.target === checkoutModal) closeCheckoutModal();
   });
 
-  // Handle Checkout Form Submission (Direct Java JDBC Transaction)
+  // Handle Checkout Form Submission (multi-table ACID transaction)
   checkoutForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const userId = parseInt(container.querySelector('#checkout-user-id').value, 10);
     const payMethod = container.querySelector('#checkout-pay-method').value;
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Executing JDBC Transaction...';
+    submitBtn.textContent = 'Executing ACID Transaction...';
     statusMsg.style.display = 'block';
     statusMsg.style.backgroundColor = 'var(--color-ivory)';
     statusMsg.style.color = 'var(--color-midnight)';
@@ -214,7 +214,7 @@ export function createCartDrawer(initialCart, onUpdateQty, onRemoveItem, onCheck
         <strong>✅ Transaction Committed Successfully!</strong><br />
         Order Record: <code>orders.id = #${order.id}</code><br />
         Payment Settlement: <code>payments.pay_id = #${order.payment?.payId || 'N/A'}</code> (${order.payment?.payMethod})<br />
-        Relational Inventory balances updated via explicit JDBC PreparedStatement.
+        Relational inventory balances updated inside the same CockroachDB transaction.
       `;
       submitBtn.textContent = 'Order Placed ✓';
       setTimeout(() => {

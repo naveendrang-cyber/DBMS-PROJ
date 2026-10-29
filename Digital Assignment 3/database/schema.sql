@@ -5,7 +5,7 @@
 --
 -- Applied by:
 --   * crdb-cli.cmd init          (cockroach sql --file database/schema.sql)
---   * DatabaseConfig.java        (on first backend start, via JDBC)
+--   * frontend/worker/index.js   (on first API request against an empty database)
 --
 -- Primary keys use explicit SQL sequences instead of SERIAL. In CockroachDB,
 -- SERIAL defaults to unique_rowid(), which produces large non-sequential

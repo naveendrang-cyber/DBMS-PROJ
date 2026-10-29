@@ -1,6 +1,6 @@
 /**
  * OMNI ATELIER — LUXURY HEADER & NAVIGATION
- * Sticky header with micro status bar, direct JDBC health badge, and animated shopping bag trigger.
+ * Sticky header with micro status bar, live database health badge, and animated shopping bag trigger.
  */
 
 export function createHeader(onCartClick, onNavClick) {
@@ -19,7 +19,7 @@ export function createHeader(onCartClick, onNavClick) {
             <span style="color:var(--color-gold-light);">GIT BRANCH: Harsh2</span>
           </div>
           <div style="display:flex; align-items:center; gap:12px;">
-            <span id="header-engine-indicator">ENGINE: COCKROACHDB (100% DIRECT JDBC)</span>
+            <span id="header-engine-indicator">ENGINE: COCKROACHDB CLOUD</span>
             <span style="opacity:0.4;">|</span>
             <span id="header-db-indicator" style="color:var(--color-gold-light);">COCKROACHDB: SERIALIZABLE ISOLATION</span>
           </div>
@@ -32,7 +32,7 @@ export function createHeader(onCartClick, onNavClick) {
       <nav class="header-nav">
         <a href="#storefront" class="brand-logo" id="brand-link" aria-label="Omni Atelier Home">
           <span class="brand-name">OMNI ATELIER</span>
-          <span class="brand-badge">JDBC × COCKROACHDB</span>
+          <span class="brand-badge">EDGE × COCKROACHDB</span>
         </a>
 
         <ul class="nav-links">

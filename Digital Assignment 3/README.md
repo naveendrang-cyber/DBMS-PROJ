@@ -1,251 +1,166 @@
 # OmniMarket Atelier (Digital Assignment 3)
 
-### Full-Stack Multi-Vendor E-Commerce Platform with Direct Java JDBC on CockroachDB Distributed SQL
+### Multi-Vendor E-Commerce Platform on CockroachDB Distributed SQL, served from Cloudflare
 
 > **Course:** Database Management Systems (Advanced Database Architecture)  
 > **Course Assessment:** Digital Assignment 3 (DA3)  
 > **Course Faculty:** Dr. Sobitha Ahila  
 > **Git Feature Branch:** `Harsh2`  
-> **Project Directory:** `Digital Assignment 3/`  
-> **Database Technology (Cloud-Native Distributed SQL):** CockroachDB v24.2  
-> **Persistence:** 100% direct Java JDBC (`java.sql.*`) through the PostgreSQL wire-protocol driver; no ORM.  
-> **Cloudflare Edge Storefront:** Deployed independently as `omni-atelier-da3` at `https://omni-atelier-da3.harshzz.workers.dev`.
+> **Database Technology (Cloud-Native Distributed SQL):** CockroachDB (Cloud cluster `omnimarket-da3`, v26.2)  
+> **Live site:** https://omni-atelier-da3.harshzz.workers.dev
 
 ---
 
-## 1. Project Directory Layout
+## 1. Architecture
+
+```
+Browser ──► Cloudflare Worker "omni-atelier-da3"
+              ├── static storefront (Vite build in frontend/dist)
+              └── /api/*  (frontend/worker/index.js, postgres.js driver)
+                      │
+                      ▼
+            Cloudflare Hyperdrive (connection pooling, caching disabled)
+                      │  TLS, port 26257
+                      ▼
+            CockroachDB Cloud: cluster omnimarket-da3, database omnimarket
+            (GCP asia-southeast1, SERIALIZABLE, Raft-replicated)
+```
+
+Everything runs on Cloudflare except the database itself. There is no separate application server.
+
+## 2. Project Layout
 
 ```
 Digital Assignment 3/
-├── crdb-cli.cmd                            # CockroachDB CLI wrapper (start / init / sql / reset / status / stop)
-├── frontend/                               # Luxury e-commerce storefront (Vite, vanilla ES modules)
-│   ├── src/
-│   │   ├── components/                     # Header, Hero, Catalog, Product modal, Cart, Professor suite ...
-│   │   ├── services/
-│   │   │   ├── api.js                      # REST client for the Spring Boot API (+ offline demo fallback)
-│   │   │   └── catalogData.js              # Photography, variants, offline catalog cache
-│   │   ├── styles/main.css
-│   │   └── main.js
-│   ├── vite.config.js                      # Dev proxy (/api -> localhost:8080, override with API_PROXY_TARGET)
-│   └── wrangler.toml                       # Cloudflare static deployment (omni-atelier-da3)
-├── backend/                                # Java 17 / Spring Boot 3.3.5 REST API with direct JDBC
-│   ├── pom.xml                             # HikariCP + org.postgresql driver; packages database/*.sql
-│   └── src/
-│       ├── main/java/com/omnimarket/da3/
-│       │   ├── config/                     # DatabaseConfig (HikariCP + first-run schema/seed), CORS
-│       │   ├── controller/                 # Health, Product, Order, Admin, Advanced, SqlConsole
-│       │   ├── dao/                        # Direct JDBC DAOs
-│       │   ├── model/ dto/ exception/
-│       └── test/java/com/omnimarket/da3/   # 12 JUnit 5 tests run against CockroachDB
+├── crdb-cli.cmd               # CockroachDB CLI wrapper (start / init / sql / reset / status / stop)
 ├── database/
-│   ├── schema.sql                          # CockroachDB DDL: 10 tables, sequences, constraints, indexes
-│   ├── seed.sql                            # Idempotent seed: 3 stores, 36 products, sample orders
+│   ├── schema.sql             # 10 tables, sequences, CHECK / FK constraints, indexes
+│   ├── seed.sql               # Idempotent seed: 3 stores, 36 products, sample orders
 │   └── README.md
-└── docs/                                   # architecture.md, database-design.md, deployment.md
+├── frontend/
+│   ├── worker/index.js        # Cloudflare Worker API (all /api/* endpoints)
+│   ├── src/                   # Storefront, Professor suite, ACID demos, SQL console
+│   ├── wrangler.toml          # Worker + assets + Hyperdrive binding
+│   └── vite.config.js
+└── docs/                      # architecture.md, database-design.md, deployment.md
 ```
-
----
-
-## 2. Technology Stack
-
-| Layer | Technology | Role |
-| :--- | :--- | :--- |
-| **Database** | **CockroachDB v24.2** (Cloud-Native Distributed SQL) | Vendors, stores, products, inventory, orders, payments, payouts, reviews |
-| **Persistence** | **Java JDBC** (`java.sql.*`) | `Connection`, `PreparedStatement`, `ResultSet`, explicit `commit()` / `rollback()` |
-| **Driver** | `org.postgresql.Driver` 42.7.4 | CockroachDB speaks the PostgreSQL v3 wire protocol |
-| **Connection Pool** | HikariCP | Pooled, thread-safe connections |
-| **Backend** | Spring Boot 3.3.5 (Java 17) | REST controllers, validation, error handling, CORS |
-| **Frontend** | Vite + ES modules | Static build deployed to Cloudflare |
-| **Hosting** | Cloudflare Workers static assets (frontend) + any JVM host (backend) + CockroachDB Cloud (database) | See section 7 |
-
----
 
 ## 3. Why CockroachDB for a Multi-Vendor Marketplace
 
 A marketplace's core data (vendors, inventory, orders, payments, payouts) needs ACID transactions, foreign
-keys and joins. A checkout must deduct stock, create the order, its line items and the payment **atomically**.
-CockroachDB keeps full SQL semantics while adding the properties a growing multi-vendor platform needs:
+keys and joins: a checkout must deduct stock and create the order, its line items and the payment
+**atomically**. CockroachDB keeps full SQL semantics and adds:
 
-1. **SERIALIZABLE isolation by default.** Two shoppers buying the last unit cannot both succeed. Conflicting
-   transactions are aborted with SQLSTATE `40001`; `OrderJdbcDao` retries them automatically (up to 3 attempts).
-2. **Raft-replicated ranges.** Every range is replicated (3x by default on multi-node clusters), so the store
-   keeps taking orders if a node fails.
-3. **Horizontal scale and multi-region.** Vendors in Bangalore, Mumbai and Delhi can be served from nearby
-   replicas as the platform grows, without changing application SQL.
-4. **PostgreSQL wire compatibility.** The backend uses the standard PostgreSQL JDBC driver, so every query is
-   ordinary, inspectable JDBC.
-5. **Managed cloud option.** CockroachDB Cloud has a free tier reachable from any backend host, which matters
-   because Cloudflare cannot run a JVM (see section 7).
+1. **SERIALIZABLE isolation by default.** Two shoppers cannot both buy the last unit. Conflicting
+   transactions are aborted with SQLSTATE `40001`; the Worker retries checkout automatically (up to 3 attempts).
+2. **Raft-replicated ranges.** Data survives node failures without application changes.
+3. **Horizontal scale and multi-region** as vendors are added in more cities.
+4. **PostgreSQL wire compatibility**, so standard drivers and Cloudflare Hyperdrive work unchanged.
 
----
+## 4. API Endpoints (frontend/worker/index.js)
 
-## 4. CockroachDB CLI Guide
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| GET | `/api/health` | Database connectivity and CockroachDB version |
+| GET | `/api/dashboard/stats` | Counts and revenue |
+| GET | `/api/products`, `/api/products/{id}`, `/api/products/{id}/related` | Catalog; related = same store first, then nearest price |
+| POST / GET | `/api/orders`, `/api/orders/{id}` | Multi-table ACID checkout; order lookup |
+| POST | `/api/admin/insert`, `/delete`, `/update` | Professor CRUD; requires `X-Admin-Key` |
+| GET | `/api/admin/tables`, `/columns`, `/records` | Table counts, column metadata, record browser |
+| GET / POST | `/api/advanced/joins`, `/aggregates`, `/transaction-demo`, `/explain` | Course demonstrations |
+| POST | `/api/sql` | Read-only SQL console |
 
-`crdb-cli.cmd` wraps the official `cockroach` binary. It looks for `cockroach.exe` on `PATH`, then in
-`%USERPROFILE%\.tools\cockroach\`, or uses `COCKROACH_BIN` if set.
-Download: https://www.cockroachlabs.com/docs/releases/
+**Safety measures**
+- Every value is a bound query parameter. Table names are whitelisted, and column names are checked against
+  `information_schema` before they appear in SQL.
+- The public SQL console and EXPLAIN run in a transaction set to `READ ONLY` and verified with
+  `SHOW transaction_read_only` before any user SQL executes, so CockroachDB rejects writes and DDL.
+- Admin mutations require the `ADMIN_API_KEY` Worker secret; missing key returns 401, wrong key 403.
+- Any failure inside checkout rolls back the whole transaction, so no partial order is ever stored.
+
+## 5. Checkout Transaction
+
+```js
+for (let attempt = 1; ; attempt++) {
+  try {
+    return await sql.begin(async (tx) => {          // BEGIN
+      const [order] = await tx`INSERT INTO orders ... RETURNING id`;
+      for (const item of items) {
+        await tx`INSERT INTO ordered_items ...`;
+        await tx`SELECT stock FROM products WHERE id = ${item.productId} FOR UPDATE`;
+        const ok = await tx`UPDATE products SET stock = stock - ${item.qty}
+                            WHERE id = ${item.productId} AND stock >= ${item.qty} RETURNING id`;
+        if (!ok.length) throw new ApiError(400, 'Insufficient stock');   // ROLLBACK
+      }
+      await tx`INSERT INTO payments ...`;
+      return order;                                   // COMMIT
+    });
+  } catch (err) {
+    if (err.code === '40001' && attempt < 3) continue; // serialization conflict: retry
+    throw err;
+  }
+}
+```
+
+## 6. CockroachDB CLI
+
+`crdb-cli.cmd` wraps the official `cockroach` binary (found on `PATH`, in `%USERPROFILE%\.tools\cockroach\`,
+or via `COCKROACH_BIN`).
 
 ```powershell
 cd "Digital Assignment 3"
-
-# 1. Start a local single-node cluster (SQL :26257, DB Console http://localhost:8090)
-.\crdb-cli.cmd start
-
-# 2. Create the 'omnimarket' database and apply database\schema.sql + database\seed.sql
-.\crdb-cli.cmd init
-
-# 3. Open an interactive SQL shell, or run one statement
-.\crdb-cli.cmd sql
-.\crdb-cli.cmd sql -e "SELECT s.name, count(p.id) FROM stores s JOIN products p ON p.store_id = s.id GROUP BY s.name"
-
-# 4. Inspect the cluster
-.\crdb-cli.cmd status
-
-# 5. Drop and rebuild the database from the SQL files
-.\crdb-cli.cmd reset
-
-# 6. Shut the node down
+.\crdb-cli.cmd start     # local single-node cluster (SQL :26257, DB Console http://localhost:8090)
+.\crdb-cli.cmd init      # create 'omnimarket', apply schema.sql + seed.sql
+.\crdb-cli.cmd sql       # interactive SQL shell
+.\crdb-cli.cmd reset     # drop and rebuild from the SQL files
 .\crdb-cli.cmd stop
 ```
 
-To run `init` / `sql` / `status` against **CockroachDB Cloud**, set the connection string first:
+Set `CRDB_URL` to a CockroachDB Cloud connection string to run `init` / `sql` / `status` against the cloud
+cluster. Some networks (including the VIT campus Wi-Fi) block outbound port 26257; use another network for
+direct CLI access. The live site is unaffected because Cloudflare connects to the cluster, not your machine.
+
+The cloud cluster itself is managed with the `ccloud` CLI, e.g.
+`ccloud cluster get omnimarket-da3` or `ccloud cluster database list omnimarket-da3`.
+
+## 7. Deploying
 
 ```powershell
-$env:CRDB_URL = "postgresql://<user>:<password>@<host>:26257/defaultdb?sslmode=verify-full"
-.\crdb-cli.cmd init
-```
-
----
-
-## 5. Running Locally
-
-```powershell
-# Terminal 1: database
-cd "Digital Assignment 3"
-.\crdb-cli.cmd start
-.\crdb-cli.cmd init
-
-# Terminal 2: backend (http://localhost:8080)
-cd "Digital Assignment 3\backend"
-mvn spring-boot:run
-
-# Terminal 3: frontend (http://localhost:5173, /api proxied to :8080)
 cd "Digital Assignment 3\frontend"
 npm install
-npm run dev
+npm run deploy            # vite build + wrangler deploy
 ```
 
-If `init` is skipped, the backend creates the database and applies the same schema and seed files on its
-first start against an empty database.
-
----
-
-## 6. Persistence Architecture: Direct JDBC on CockroachDB
-
-### 6.1 Zero-ORM policy
-No Hibernate, JPA, MyBatis or Spring Data repositories. Every query goes through `Connection`,
-`PreparedStatement` and `ResultSet`, so each SQL statement sent to CockroachDB is explicit and inspectable.
-
-### 6.2 Parameterized statements
-All values are bound with JDBC setters. Table and column names cannot be bound as parameters, so the
-Professor interface checks table names against a whitelist and column names against the table's real columns
-(`DatabaseMetaData.getColumns`) before building SQL.
-
-### 6.3 Explicit multi-table ACID checkout (`OrderJdbcDao`)
-
-```java
-public Order createOrderWithTransaction(CheckoutRequest req) {
-    for (int attempt = 1; ; attempt++) {
-        try {
-            return runCheckoutTransaction(req);
-        } catch (SQLException e) {
-            // CockroachDB SERIALIZABLE conflict: safe to retry the whole transaction
-            if ("40001".equals(e.getSQLState()) && attempt < MAX_TRANSACTION_ATTEMPTS) continue;
-            throw new DatabaseOperationException("Checkout transaction failed: " + e.getMessage(), e);
-        }
-    }
-}
-
-private Order runCheckoutTransaction(CheckoutRequest req) throws SQLException {
-    conn.setAutoCommit(false);                       // begin explicit transaction
-    // SELECT price, stock ... ; INSERT INTO orders ... ;
-    // INSERT INTO ordered_items ... ; SELECT stock ... FOR UPDATE ; UPDATE products SET stock = stock - ? ... ;
-    // INSERT INTO payments ...
-    conn.commit();                                   // all four tables change together
-    ...
-    } catch (SQLException | RuntimeException e) {
-        conn.rollback();                             // any failure: nothing is persisted
-        throw e;
-    }
-}
-```
-
-### 6.4 Read-only SQL console
-The public SQL console and EXPLAIN endpoints run inside a `READ ONLY` transaction, so CockroachDB rejects any
-write or DDL (including `EXPLAIN ANALYZE` of a write). Data changes go through the key-protected Professor
-interface.
-
-### 6.5 Schema design notes
-Primary keys use explicit sequences instead of `SERIAL` (which in CockroachDB yields large non-sequential
-`unique_rowid()` values), keeping order numbers readable. See `database/README.md` and
-`docs/database-design.md`.
-
----
-
-## 7. Deployment
-
-Cloudflare Workers run JavaScript/WASM and cannot run the Java backend, so the system deploys in three parts:
-
-| Part | Where | Notes |
-| :--- | :--- | :--- |
-| Frontend | Cloudflare (`omni-atelier-da3`) | `npm run build` then `npx wrangler deploy` from `frontend/` |
-| Backend | Any JVM host (Render, Railway, Fly.io, a VM) | `mvn package` then `java -jar target/omnimarket-da3-backend-1.0.0.jar` |
-| Database | CockroachDB Cloud | Set `DB_URL` on the backend to the Cloud connection string |
-
-Build the frontend with the backend's public URL so the storefront calls the live API:
+One-time setup (already done for `omni-atelier-da3`):
 
 ```powershell
-$env:VITE_API_BASE_URL = "https://<your-backend-host>/api"
-npm run build
+npx wrangler hyperdrive create omnimarket-crdb --connection-string="postgresql://<user>:<password>@<host>:26257/omnimarket" --caching-disabled
+npx wrangler secret put ADMIN_API_KEY
 ```
 
-Without `VITE_API_BASE_URL` the deployed storefront cannot reach a backend and runs on its offline demo data.
+The Hyperdrive ID goes in `wrangler.toml`. On the first request against an empty database the Worker applies
+`database/schema.sql` and `database/seed.sql` (bundled at build time); each step is idempotent.
+
 The DA2 deployment (`omni-atelier`, Cloudflare D1) is separate and unaffected.
 
----
-
-## 8. Automated Tests
-
-The 12 JUnit tests run against a real CockroachDB database. They create orders and change stock, so point
-them at a throwaway database:
+## 8. Local Development
 
 ```powershell
-cd "Digital Assignment 3\backend"
-$env:DB_URL = "jdbc:postgresql://localhost:26257/omnimarket_test?sslmode=disable"
-mvn test
-Remove-Item Env:DB_URL
+cd "Digital Assignment 3"
+.\crdb-cli.cmd start; .\crdb-cli.cmd init
+
+cd frontend
+$env:CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE = "postgresql://root@localhost:26257/omnimarket?sslmode=disable"
+npm run dev:api           # Worker API on http://localhost:8787
+npm run dev               # storefront on http://localhost:5173 (proxies /api to :8787)
 ```
 
-| Test class | Tests | Covers |
+## 9. Configuration
+
+| Setting | Where | Purpose |
 | :--- | :--- | :--- |
-| `AdminJdbcDaoTest` | 5 | Parameterized INSERT / UPDATE / DELETE, unknown-column rejection, string-to-numeric coercion |
-| `TransactionJdbcTest` | 5 | ACID commit and rollback demo, checkout commit, no partial order on mid-transaction failure, read-only console |
-| `JdbcConnectionTest` | 1 | DataSource and connection lifecycle |
-| `OmniMarketApplicationTests` | 1 | Spring context loads |
-
----
-
-## 9. Configuration Reference
-
-| Parameter | Environment Variable | Default | Description |
-| :--- | :--- | :--- | :--- |
-| Server port | `PORT` | `8080` | Spring Boot HTTP port |
-| Database URL | `DB_URL` | `jdbc:postgresql://localhost:26257/omnimarket?sslmode=disable` | CockroachDB URL (`postgresql://user:pass@host...` also accepted) |
-| Database user | `DB_USER` | `root` | Ignored when the URL contains credentials |
-| Database password | `DB_PASSWORD` | `""` | |
-| Pool size | `DB_POOL_SIZE` | `10` | HikariCP maximum pool size |
-| CORS origins | `CORS_ALLOWED_ORIGINS` | localhost:5173, `*.workers.dev`, `*.pages.dev` | Comma-separated origin patterns |
-| Admin key | `ADMIN_API_KEY` | `omni-admin-secret-da3` | Required `X-Admin-Key` for Professor INSERT / UPDATE / DELETE; change it for any shared deployment |
-| Frontend API base | `VITE_API_BASE_URL` | `/api` | Set at frontend build time for the Cloudflare deployment |
-| Dev proxy target | `API_PROXY_TARGET` | `http://localhost:8080` | Vite dev server only |
-| CLI cluster URL | `CRDB_URL` | (local insecure node) | Used by `crdb-cli.cmd` |
+| `HYPERDRIVE` binding | `wrangler.toml` | CockroachDB Cloud connection (credentials stored in Hyperdrive) |
+| `ADMIN_API_KEY` | Worker secret | Required `X-Admin-Key` for Professor INSERT / UPDATE / DELETE |
+| `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` | env var | Local database for `wrangler dev` |
+| `API_PROXY_TARGET` | env var | Vite dev proxy target (default `http://localhost:8787`) |
+| `CRDB_URL` | env var | Cluster used by `crdb-cli.cmd` |

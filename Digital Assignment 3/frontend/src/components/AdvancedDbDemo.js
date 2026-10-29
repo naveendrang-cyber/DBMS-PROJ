@@ -34,7 +34,7 @@ export function createAdvancedDbDemo() {
       <div id="tab-acid" class="demo-panel active">
         <div style="background:var(--color-ivory); border:1px solid var(--color-border); padding:24px; border-radius:var(--radius-sm); margin-bottom:24px;">
           <h3 style="font-family:var(--font-serif); font-size:1.5rem; color:var(--color-midnight); margin-bottom:8px;">
-            Interactive JDBC Transaction Demarcation &amp; Rollback Proof
+            Interactive ACID Transaction Demarcation &amp; Rollback Proof
           </h3>
           <p style="font-size:0.9375rem; color:var(--color-text-secondary); margin-bottom:18px;">
             Test genuine transactional atomicity. A real multi-step workflow creates an order and inserts line items. Triggering a simulated foreign key constraint violation causes an immediate <code>conn.rollback()</code>, proving zero partial state is retained.
@@ -61,51 +61,32 @@ export function createAdvancedDbDemo() {
 
         <div>
           <h4 style="font-family:var(--font-serif); font-size:1.25rem; color:var(--color-midnight); margin-bottom:8px;">
-            Java JDBC Source Implementation (OrderJdbcDao.java)
+            Source Implementation (worker/index.js · Cloudflare Workers + Hyperdrive)
           </h4>
-          <pre class="code-box"><code>// Explicit JDBC Transaction Demarcation Pattern (com.omnimarket.da3.dao.OrderJdbcDao)
-try (Connection conn = dataSource.getConnection()) {
-    // 1. Disable auto-commit to begin transactional boundary
-    conn.setAutoCommit(false);
-
-    // 2. Insert master order record
-    try (PreparedStatement orderStmt = conn.prepareStatement(insertOrderSql, Statement.RETURN_GENERATED_KEYS)) {
-        orderStmt.setInt(1, req.getUserId());
-        orderStmt.setBigDecimal(2, grandTotal);
-        orderStmt.executeUpdate();
-        // Retrieve generated primary key...
-    }
-
-    // 3. Insert child ordered items & update inventory atomically
-    try (PreparedStatement itemStmt = conn.prepareStatement(insertItemSql)) {
-        for (OrderedItem item : items) {
-            itemStmt.setInt(1, orderId);
-            itemStmt.setInt(2, item.getProductId());
-            itemStmt.setInt(3, item.getQty());
-            itemStmt.setBigDecimal(4, item.getPrice());
-            itemStmt.executeUpdate();
-            
-            // Decrement inventory stock check
-            productJdbcDao.deductStock(conn, item.getProductId(), item.getQty());
-        }
-    }
-
-    // 4. Record payment settlement
-    try (PreparedStatement payStmt = conn.prepareStatement(insertPaymentSql)) {
-        payStmt.setInt(1, orderId);
-        payStmt.setBigDecimal(2, grandTotal);
-        payStmt.setString(3, req.getPayMethod());
-        payStmt.executeUpdate();
-    }
-
-    // 5. Commit all changes atomically
-    conn.commit();
-} catch (SQLException e) {
-    // If any step violates a constraint, rollback reverts ALL changes
-    if (conn != null) {
-        conn.rollback();
-    }
-    throw new DatabaseOperationException("Transaction failed: " + e.getMessage(), e);
+          <pre class="code-box"><code>// Checkout transaction (postgres.js over Cloudflare Hyperdrive to CockroachDB Cloud)
+for (let attempt = 1; ; attempt++) {
+  try {
+    // sql.begin() issues BEGIN ... COMMIT; any thrown error issues ROLLBACK
+    return await sql.begin(async (tx) => {
+      const [order] = await tx\`INSERT INTO orders (user_id, status, total_price)
+                               VALUES (\${userId}, 'completed', \${total}) RETURNING id\`;
+      for (const item of items) {
+        await tx\`INSERT INTO ordered_items (order_id, product_id, qty, price)
+                 VALUES (\${order.id}, \${item.productId}, \${item.qty}, \${item.price})\`;
+        await tx\`SELECT stock FROM products WHERE id = \${item.productId} FOR UPDATE\`;
+        const ok = await tx\`UPDATE products SET stock = stock - \${item.qty}
+                            WHERE id = \${item.productId} AND stock >= \${item.qty} RETURNING id\`;
+        if (!ok.length) throw new ApiError(400, 'Insufficient stock'); // -> ROLLBACK
+      }
+      await tx\`INSERT INTO payments (order_id, amount, pay_method)
+               VALUES (\${order.id}, \${total}, \${payMethod})\`;
+      return order;                                                   // -> COMMIT
+    });
+  } catch (err) {
+    // CockroachDB SERIALIZABLE conflict: retry the whole transaction
+    if (err.code === '40001' &amp;&amp; attempt &lt; 3) continue;
+    throw err;
+  }
 }</code></pre>
         </div>
       </div>
@@ -255,7 +236,7 @@ ORDER BY total_products DESC, s.name ASC;</code></pre>
               PostgreSQL Wire Compatibility
             </h4>
             <p style="font-size:0.875rem; color:var(--color-text-secondary); line-height:1.6;">
-              CockroachDB speaks the standard PostgreSQL v3 protocol natively. The Spring Boot backend connects seamlessly using <code>org.postgresql.Driver</code>, executing prepared statements, connection pooling, and SSL encryption without bespoke drivers.
+              CockroachDB speaks the standard PostgreSQL v3 protocol natively. The Cloudflare Worker connects through <code>Cloudflare Hyperdrive</code> with the <code>postgres.js</code> driver, executing parameterized statements, connection pooling, and SSL encryption without bespoke drivers.
             </p>
           </div>
         </div>
@@ -265,8 +246,7 @@ ORDER BY total_products DESC, s.name ASC;</code></pre>
             Academic Course Note: Distributed vs. Local Environments
           </h4>
           <p style="font-size:0.875rem; color:var(--color-text-secondary); line-height:1.6;">
-            <strong>Distinguishing Live Tests from Conceptual Architecture:</strong> The JDBC transaction, commit, and rollback demonstrations run genuine code against the active database. Locally they run on a single-node CockroachDB cluster started with <code>crdb-cli.cmd start</code>; pointing <code>DB_URL</code> at a multi-node CockroachDB Cloud cluster runs the identical SQL and JDBC transaction code with Raft consensus across nodes.
-          </p>
+            <strong>Distinguishing Live Tests from Conceptual Architecture:</strong> The transaction, commit, and rollback demonstrations run genuine code against the active database. They run on the CockroachDB Cloud cluster through Cloudflare Hyperdrive; locally, <code>crdb-cli.cmd</code> starts a single-node cluster running the identical schema and SQL.</p>
         </div>
       </div>
     </div>
@@ -301,7 +281,7 @@ ORDER BY total_products DESC, s.name ASC;</code></pre>
     commitBtn.disabled = true;
     rollbackBtn.disabled = true;
     timelineBox.style.display = 'block';
-    stepsContainer.innerHTML = '<div style="padding:16px; color:var(--color-text-muted);">Executing JDBC transaction steps...</div>';
+    stepsContainer.innerHTML = '<div style="padding:16px; color:var(--color-text-muted);">Executing transaction steps on CockroachDB...</div>';
 
     try {
       const resp = await api.runAcidTransactionDemo(shouldFail);

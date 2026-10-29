@@ -1,6 +1,6 @@
 # OmniMarket Atelier (DA3) — Frontend Application
 
-This directory contains the redesigned storefront and evaluation interfaces for **Digital Assignment 3**, styled with the luxury *White × Midnight Green × Champagne Gold* aesthetic and connected directly to the Java Spring Boot JDBC backend.
+This directory contains the redesigned storefront and evaluation interfaces for **Digital Assignment 3**, styled with the luxury *White × Midnight Green × Champagne Gold* aesthetic and served together with its API by a Cloudflare Worker backed by CockroachDB Cloud (via Hyperdrive).
 
 ## Design Palette Specifications
 
@@ -16,19 +16,19 @@ This directory contains the redesigned storefront and evaluation interfaces for 
 ## Features
 
 1. **Luxury Storefront:**
-   - Real-time catalog populated from relational database via JDBC.
+   - Real-time catalog loaded from CockroachDB.
    - Category filtering (All, TechZone Electronics, StyleHub Apparel).
    - Live client-side and server-backed search.
    - Stock status indicators ("In Stock", "Only X Left", "Sold Out").
    - Interactive Quick View modal.
    - Slide-out Cart Drawer with real-time price calculation.
-   - Multi-step Checkout Modal triggering an explicit ACID transaction in Java.
+   - Multi-step Checkout Modal triggering an explicit multi-table ACID transaction on CockroachDB.
 
 2. **Dedicated Professor Database Management Section:**
    - Strictly implements the **Three Primary Action Buttons** in order:
-     1. **Insert:** Dynamic schema form generation, input validation, parameterized JDBC INSERT, displays generated primary key and new record.
-     2. **Delete:** Selectable record dropdown with preview, confirmation dialog, parameterized JDBC DELETE, referential integrity error handling.
-     3. **Update:** Selectable record dropdown, loads current values, permits editing non-PK fields, parameterized JDBC UPDATE, displays updated record.
+     1. **Insert:** Dynamic schema form generation, input validation, parameterized INSERT, displays generated primary key and new record.
+     2. **Delete:** Selectable record dropdown with preview, confirmation dialog, parameterized DELETE, referential integrity error handling.
+     3. **Update:** Selectable record dropdown, loads current values, permits editing non-PK fields, parameterized UPDATE, displays updated record.
    - Live Table Record Inspector showing real data from the selected table with pagination and column metadata.
 
 3. **Advanced Database Course Demonstration Section:**
@@ -49,7 +49,7 @@ npm install
 npm run dev
 ```
 
-Runs local dev server at `http://localhost:5173`. Proxies `/api` requests to `http://localhost:8080`.
+Runs the storefront at `http://localhost:5173` and proxies `/api` to the local Worker started with `npm run dev:api` (`http://localhost:8787`).
 
 ## Production Build
 
@@ -57,4 +57,8 @@ Runs local dev server at `http://localhost:5173`. Proxies `/api` requests to `ht
 npm run build
 ```
 
-Generates optimized production bundle in `dist/`.
+Generates the production bundle in `dist/`. Deploy the storefront and API together with `npm run deploy`.
+
+## API
+
+`worker/index.js` implements every `/api/*` endpoint. See the top-level `README.md` for the endpoint list and `docs/deployment.md` for setup.

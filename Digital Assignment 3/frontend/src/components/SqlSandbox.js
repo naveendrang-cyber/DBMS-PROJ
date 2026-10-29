@@ -1,6 +1,6 @@
 /**
  * SQL Sandbox / Console Component
- * Executes live arbitrary queries against the Java backend JDBC layer
+ * Executes live arbitrary queries against CockroachDB (read-only transaction)
  */
 
 import { api } from '../services/api.js';
@@ -18,7 +18,7 @@ export function createSqlSandbox() {
         <p class="section-label">Interactive SQL Workspace</p>
         <h2 class="section-title">Educational Query Console</h2>
         <p class="section-desc">
-          Execute standard ANSI SQL queries against the active database via the Java JDBC service. Inspect execution time, returned columns, and dataset rows.
+          Execute standard ANSI SQL queries against the live CockroachDB database (read-only). Inspect execution time, returned columns, and dataset rows.
         </p>
       </div>
 

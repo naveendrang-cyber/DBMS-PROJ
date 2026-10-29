@@ -18,7 +18,7 @@ export function createFooter() {
             <span style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--color-gold-light); border:1px solid var(--color-gold-border); padding:2px 6px; border-radius:2px;">DA3</span>
           </div>
           <p style="margin-bottom:18px;">
-            An advanced multi-vendor luxury commerce storefront built for Database Management Systems Digital Assignment 3. Demonstrates 100% direct Java JDBC persistence, parameterized PreparedStatement execution, and explicit multi-table ACID transaction demarcation on CockroachDB distributed SQL.
+            An advanced multi-vendor luxury commerce storefront built for Database Management Systems Digital Assignment 3. Demonstrates parameterized SQL persistence, parameterized statement execution, and explicit multi-table ACID transaction demarcation on CockroachDB distributed SQL.
           </p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <span class="badge badge-dark">Dr. Sobitha Ahila</span>
@@ -31,10 +31,10 @@ export function createFooter() {
         <div class="footer-col">
           <h5>Persistence Architecture</h5>
           <ul>
-            <li><a href="#storefront">Direct Java JDBC (java.sql.*)</a></li>
+            <li><a href="#storefront">Cloudflare Workers API</a></li>
             <li><a href="#academic-suite">Zero-ORM Hibernate Bypass</a></li>
-            <li><a href="#academic-suite">HikariCP High-Concurrency Pool</a></li>
-            <li><a href="#academic-suite">Parameterized PreparedStatements</a></li>
+            <li><a href="#academic-suite">Hyperdrive Connection Pooling</a></li>
+            <li><a href="#academic-suite">Parameterized Statements</a></li>
             <li><a href="#academic-suite">Explicit Transaction Isolation</a></li>
           </ul>
         </div>
@@ -70,8 +70,7 @@ export function createFooter() {
           <span>&copy; 2026 Omni Atelier · Digital Assignment 3 (DBMS Course Assessment)</span>
         </div>
         <div style="display:flex; gap:20px; font-family:var(--font-mono); font-size:0.6875rem;">
-          <span>JAVA 17 LTS</span>
-          <span>SPRING BOOT 3.3.5</span>
+          <span>CLOUDFLARE HYPERDRIVE</span>
           <span>COCKROACHDB</span>
           <span>CLOUDFLARE WORKERS</span>
         </div>

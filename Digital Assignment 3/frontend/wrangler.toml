@@ -1,18 +1,32 @@
 # ==============================================================================
-# CLOUDFLARE DEPLOYMENT CONFIGURATION: DIGITAL ASSIGNMENT 3
-# Independent Cloudflare Pages / Edge deployment for DA3 Redesigned Frontend
+# CLOUDFLARE DEPLOYMENT: DIGITAL ASSIGNMENT 3 (omni-atelier-da3)
+# One Worker serves the Vite build from ./dist and the /api/* endpoints, which
+# query CockroachDB Cloud through Cloudflare Hyperdrive.
+#   npm run build && npx wrangler deploy
+# Secret (set once): npx wrangler secret put ADMIN_API_KEY
 # ==============================================================================
 
 name = "omni-atelier-da3"
+main = "worker/index.js"
 compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
 
-# Serve static frontend assets built by Vite
+# Static frontend; requests that match no asset (all /api/* paths) run the Worker
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 
-# Environment Variables for Cloudflare Deployment
+# CockroachDB Cloud cluster 'omnimarket-da3', database 'omnimarket' (caching disabled)
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "9623f5c8b2434297892dfe0a5e0e1369"
+
+# Bundle database/schema.sql and seed.sql into the Worker for first-run initialization
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
 [vars]
-# Point to your Java Spring Boot Backend host (e.g., Render, Railway, Fly.io, or AWS)
-# Example: BACKEND_API_URL = "https://omnimarket-backend.onrender.com"
 APP_ENV = "production"
-APP_TITLE = "OmniMarket Atelier (DA3 Distributed SQL & Java JDBC)"
+APP_TITLE = "OmniMarket Atelier (DA3 · CockroachDB Distributed SQL)"

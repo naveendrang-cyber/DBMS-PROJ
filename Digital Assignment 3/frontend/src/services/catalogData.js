@@ -1,7 +1,7 @@
 /**
  * OMNI ATELIER — PRODUCT METADATA & ASSET REGISTRY
  * Provides high-resolution photography, secondary hover angles, variant matrices,
- * and category taxonomies merged seamlessly with live relational records from SQL JDBC.
+ * and category taxonomies merged seamlessly with live relational records from CockroachDB.
  */
 
 export const CATEGORIES = [
@@ -468,7 +468,7 @@ const FALLBACK_PRIMARY = 'https://images.unsplash.com/photo-1523275335684-37898b
 const FALLBACK_SECONDARY = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=80';
 
 /**
- * Enriches a raw database product entity (from Java JDBC REST) with visual assets
+ * Enriches a raw database product entity (from the Worker API) with visual assets
  */
 export function enrichProduct(rawProduct) {
   if (!rawProduct) return null;
