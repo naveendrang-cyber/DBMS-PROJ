@@ -18,7 +18,7 @@ export function createFooter() {
             <span style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--color-gold-light); border:1px solid var(--color-gold-border); padding:2px 6px; border-radius:2px;">DA3</span>
           </div>
           <p style="margin-bottom:18px;">
-            An advanced multi-vendor luxury commerce storefront built for Database Management Systems Digital Assignment 3. Demonstrates 100% direct Java JDBC persistence, parameterized PreparedStatement execution, explicit multi-table ACID transaction demarcation, and Qdrant 384-dimensional semantic discovery.
+            An advanced multi-vendor luxury commerce storefront built for Database Management Systems Digital Assignment 3. Demonstrates 100% direct Java JDBC persistence, parameterized PreparedStatement execution, and explicit multi-table ACID transaction demarcation on CockroachDB distributed SQL.
           </p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <span class="badge badge-dark">Dr. Sobitha Ahila</span>
@@ -39,15 +39,15 @@ export function createFooter() {
           </ul>
         </div>
 
-        <!-- Col 3: Vector Intelligence -->
+        <!-- Col 3: Distributed SQL -->
         <div class="footer-col">
-          <h5>Vector Database</h5>
+          <h5>Distributed SQL</h5>
           <ul>
-            <li><a href="#storefront">Qdrant Vector REST API v1</a></li>
-            <li><a href="#storefront">FastEmbed ONNX (BAAI/bge-small)</a></li>
-            <li><a href="#storefront">384-Dimensional Dense Vectors</a></li>
-            <li><a href="#storefront">Cosine Similarity Metric</a></li>
-            <li><a href="#storefront">Real-Time Vector Sync Hook</a></li>
+            <li><a href="#academic-suite">CockroachDB (PostgreSQL Wire Protocol)</a></li>
+            <li><a href="#academic-suite">Raft Consensus Replication</a></li>
+            <li><a href="#academic-suite">SERIALIZABLE Isolation</a></li>
+            <li><a href="#academic-suite">40001 Transaction Retry</a></li>
+            <li><a href="#academic-suite">SELECT ... FOR UPDATE Row Locks</a></li>
           </ul>
         </div>
 
@@ -72,8 +72,7 @@ export function createFooter() {
         <div style="display:flex; gap:20px; font-family:var(--font-mono); font-size:0.6875rem;">
           <span>JAVA 17 LTS</span>
           <span>SPRING BOOT 3.3.5</span>
-          <span>COCKROACHDB / SQLITE</span>
-          <span>QDRANT REST V1</span>
+          <span>COCKROACHDB</span>
           <span>CLOUDFLARE WORKERS</span>
         </div>
       </div>

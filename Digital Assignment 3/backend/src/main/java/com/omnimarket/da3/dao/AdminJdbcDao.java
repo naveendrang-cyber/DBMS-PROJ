@@ -54,50 +54,44 @@ public class AdminJdbcDao extends BaseJdbcDao {
         logger.info("Executing JDBC INSERT on table [{}]: {}", table, sql);
 
         try (Connection conn = dataSource.getConnection()) {
-            boolean isPostgres = conn.getMetaData().getDatabaseProductName().toLowerCase().contains("postgres")
-                    || conn.getMetaData().getDatabaseProductName().toLowerCase().contains("cockroach");
+            validateColumns(conn, table, columns);
 
-            // For PostgreSQL / CockroachDB we can append RETURNING or use Statement.RETURN_GENERATED_KEYS
-            PreparedStatement pstmt;
-            if (isPostgres) {
-                pstmt = conn.prepareStatement(sql.toString(), Statement.RETURN_GENERATED_KEYS);
-            } else {
-                pstmt = conn.prepareStatement(sql.toString(), Statement.RETURN_GENERATED_KEYS);
-            }
-
-            for (int i = 0; i < columns.size(); i++) {
-                Object val = filteredData.get(columns.get(i));
-                pstmt.setObject(i + 1, val);
-            }
-
-            int affected = pstmt.executeUpdate();
-            Object generatedId = null;
-
-            try (ResultSet genKeys = pstmt.getGeneratedKeys()) {
-                if (genKeys.next()) {
-                    generatedId = genKeys.getObject(1);
+            // pgJDBC appends RETURNING <pk> for CockroachDB so the generated sequence value comes back
+            try (PreparedStatement pstmt = conn.prepareStatement(sql.toString(), new String[]{pkCol})) {
+                for (int i = 0; i < columns.size(); i++) {
+                    Object val = filteredData.get(columns.get(i));
+                    pstmt.setObject(i + 1, val);
                 }
-            }
 
-            if (generatedId == null && filteredData.containsKey(pkCol)) {
-                generatedId = filteredData.get(pkCol);
-            }
+                int affected = pstmt.executeUpdate();
+                Object generatedId = null;
 
-            Map<String, Object> insertedRecord = null;
-            if (generatedId != null) {
-                insertedRecord = fetchRecordById(conn, table, pkCol, generatedId);
-            }
+                try (ResultSet genKeys = pstmt.getGeneratedKeys()) {
+                    if (genKeys.next()) {
+                        generatedId = genKeys.getObject(1);
+                    }
+                }
 
-            long elapsed = System.currentTimeMillis() - startTime;
-            return MutationResponse.success(
-                    "INSERT",
-                    table,
-                    generatedId,
-                    affected,
-                    "Record inserted successfully into table '" + table + "' via parameterized JDBC PreparedStatement.",
-                    insertedRecord,
-                    elapsed
-            );
+                if (generatedId == null && filteredData.containsKey(pkCol)) {
+                    generatedId = filteredData.get(pkCol);
+                }
+
+                Map<String, Object> insertedRecord = null;
+                if (generatedId != null) {
+                    insertedRecord = fetchRecordById(conn, table, pkCol, generatedId);
+                }
+
+                long elapsed = System.currentTimeMillis() - startTime;
+                return MutationResponse.success(
+                        "INSERT",
+                        table,
+                        generatedId,
+                        affected,
+                        "Record inserted successfully into table '" + table + "' via parameterized JDBC PreparedStatement.",
+                        insertedRecord,
+                        elapsed
+                );
+            }
 
         } catch (SQLException e) {
             logger.error("JDBC INSERT Error on table {}: {}", table, e.getMessage());
@@ -178,6 +172,8 @@ public class AdminJdbcDao extends BaseJdbcDao {
         logger.info("Executing JDBC UPDATE on table [{}] where {} = {}", table, pkCol, id);
 
         try (Connection conn = dataSource.getConnection()) {
+            validateColumns(conn, table, columns);
+
             try (PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
                 int paramIndex = 1;
                 for (String col : columns) {
@@ -242,8 +238,8 @@ public class AdminJdbcDao extends BaseJdbcDao {
             DatabaseMetaData meta = conn.getMetaData();
             String tableNamePattern = table;
             
-            // Try both lowercase and uppercase for PostgreSQL / CockroachDB compatibility
-            try (ResultSet rs = meta.getColumns(null, null, tableNamePattern, null)) {
+            // Try both lowercase and uppercase identifiers
+            try (ResultSet rs = meta.getColumns(conn.getCatalog(), null, tableNamePattern, null)) {
                 boolean found = false;
                 while (rs.next()) {
                     found = true;
@@ -296,6 +292,24 @@ public class AdminJdbcDao extends BaseJdbcDao {
             logger.error("Error fetching table counts: {}", e.getMessage());
         }
         return counts;
+    }
+
+    /**
+     * Column names cannot be bound as JDBC parameters, so every requested column is checked
+     * against the table's real columns (from DatabaseMetaData) before it is placed in the SQL text.
+     */
+    private void validateColumns(Connection conn, String table, List<String> columns) throws SQLException {
+        Set<String> known = new HashSet<>();
+        try (ResultSet rs = conn.getMetaData().getColumns(conn.getCatalog(), null, table.toLowerCase(), null)) {
+            while (rs.next()) {
+                known.add(rs.getString("COLUMN_NAME").toLowerCase());
+            }
+        }
+        for (String col : columns) {
+            if (col == null || !known.contains(col.toLowerCase())) {
+                throw new DatabaseOperationException("Unknown column '" + col + "' for table '" + table + "'.");
+            }
+        }
     }
 
     private Map<String, Object> fetchRecordById(Connection conn, String table, String pkCol, Object id) throws SQLException {

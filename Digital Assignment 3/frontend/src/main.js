@@ -1,7 +1,7 @@
 /**
  * OMNI ATELIER (DA3) — APPLICATION ENTRY & STATE ORCHESTRATOR
  * Orchestrates Storefront, Category Discovery, Editorial Campaign, Cart Drawer,
- * Product Modal with Qdrant Recommendations, and Professor Academic Suite.
+ * Product Modal with related-product recommendations, and Professor Academic Suite.
  */
 
 import './styles/main.css';
@@ -78,7 +78,7 @@ async function initApp() {
       if (storefront) storefront.scrollIntoView({ behavior: 'smooth' });
     },
     () => {
-      if (catalogInstance) catalogInstance.activateSemanticSearch();
+      if (catalogInstance) catalogInstance.focusSearch();
     },
     (productId, autoAddToCart = false) => {
       const prod = rawProducts.find(p => p.id === productId);
@@ -190,6 +190,7 @@ async function checkHealth() {
 
   try {
     const health = await api.getHealth();
+    if (health.database !== 'connected') throw new Error(health.message);
     badge.className = 'badge badge-success';
     badge.title = `Engine: ${health.engine} | Driver: ${health.driver}`;
     if (dot) dot.className = 'pulse-dot';
@@ -224,11 +225,9 @@ async function fetchInitialData() {
       }
     }
 
-    // Inspect Qdrant status to update top bar
-    const qStatus = await api.getQdrantStatus();
-    if (qStatus && qStatus.pointsCount) {
-      const qInd = document.getElementById('header-qdrant-indicator');
-      if (qInd) qInd.textContent = `QDRANT: ${qStatus.pointsCount} VECTORS · 384D COSINE`;
+    const dbInd = document.getElementById('header-db-indicator');
+    if (dbInd && stats && stats.totalOrders !== undefined) {
+      dbInd.textContent = `COCKROACHDB: ${stats.totalOrders} ORDERS · SERIALIZABLE`;
     }
   } catch (err) {
     console.warn("Could not fetch remote products; will retry on refresh.", err);

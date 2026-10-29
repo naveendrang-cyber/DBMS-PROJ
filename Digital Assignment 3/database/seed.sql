@@ -1,5 +1,5 @@
 -- ============================================================================
--- DIGITAL ASSIGNMENT 3: SAMPLE SEED DATA (COCKROACHDB / POSTGRESQL)
+-- DIGITAL ASSIGNMENT 3: SAMPLE SEED DATA (COCKROACHDB)
 -- Idempotent seed statements using standard ON CONFLICT clauses
 -- ============================================================================
 
@@ -108,7 +108,7 @@ INSERT INTO reviews (id, user_id, product_id, comment) VALUES
 (3, 6, 4, 'High quality denim material and perfect fit. Highly recommended!')
 ON CONFLICT (id) DO NOTHING;
 
--- Sync sequences for auto-increment columns (PostgreSQL / CockroachDB)
+-- Advance each sequence past the explicitly seeded IDs so new rows continue at MAX(id) + 1
 SELECT setval('roles_id_seq', (SELECT MAX(id) FROM roles));
 SELECT setval('users_user_id_seq', (SELECT MAX(user_id) FROM users));
 SELECT setval('sellers_id_seq', (SELECT MAX(id) FROM sellers));

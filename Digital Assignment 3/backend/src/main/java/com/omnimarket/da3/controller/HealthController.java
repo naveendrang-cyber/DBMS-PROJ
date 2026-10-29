@@ -30,8 +30,10 @@ public class HealthController {
             boolean valid = conn.isValid(2);
             resp.put("status", valid ? "ok" : "degraded");
             resp.put("database", "connected");
-            resp.put("engine", conn.getMetaData().getDatabaseProductName());
-            resp.put("version", conn.getMetaData().getDatabaseProductVersion());
+            // CockroachDB reports itself as "PostgreSQL 13" over the wire protocol; version() has the real build
+            String version = serverVersion(conn);
+            resp.put("engine", version.startsWith("CockroachDB") ? "CockroachDB" : conn.getMetaData().getDatabaseProductName());
+            resp.put("version", version);
             resp.put("driver", conn.getMetaData().getDriverName() + " (" + conn.getMetaData().getDriverVersion() + ")");
             resp.put("framework", "Java Spring Boot + Direct JDBC");
             return ResponseEntity.ok(resp);
@@ -69,6 +71,13 @@ public class HealthController {
             return ResponseEntity.ok(stats);
         } catch (SQLException e) {
             return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    private String serverVersion(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT version();")) {
+            return rs.next() ? rs.getString(1) : conn.getMetaData().getDatabaseProductVersion();
         }
     }
 

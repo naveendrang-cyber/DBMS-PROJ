@@ -1,0 +1,5 @@
+backend/target/
+frontend/
+database/crdb-data/
+docs/
+**/*.db

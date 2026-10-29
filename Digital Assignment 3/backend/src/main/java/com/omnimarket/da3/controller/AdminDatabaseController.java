@@ -12,9 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import com.omnimarket.da3.dao.ProductJdbcDao;
-import com.omnimarket.da3.model.Product;
-import com.omnimarket.da3.service.QdrantVectorService;
 import java.util.List;
 import java.util.Map;
 
@@ -25,21 +22,15 @@ public class AdminDatabaseController {
     @Autowired
     private AdminJdbcDao adminJdbcDao;
 
-    @Autowired
-    private ProductJdbcDao productJdbcDao;
-
-    @Autowired
-    private QdrantVectorService qdrantVectorService;
-
     @Value("${app.admin.api-key:omni-admin-secret-da3}")
     private String configuredApiKey;
 
     private void checkAuthorization(String clientApiKey) {
-        // Allows access if key matches or in local development mode
-        if (clientApiKey != null && !clientApiKey.isBlank()) {
-            if (!configuredApiKey.equals(clientApiKey.trim())) {
-                throw new ApiException(403, "Invalid Administrative API Key. Access denied.");
-            }
+        if (clientApiKey == null || clientApiKey.isBlank()) {
+            throw new ApiException(401, "Missing X-Admin-Key header. Administrative access required.");
+        }
+        if (!configuredApiKey.equals(clientApiKey.trim())) {
+            throw new ApiException(403, "Invalid Administrative API Key. Access denied.");
         }
     }
 
@@ -53,17 +44,6 @@ public class AdminDatabaseController {
             @Valid @RequestBody InsertRecordRequest request) {
         checkAuthorization(apiKey);
         MutationResponse response = adminJdbcDao.insertRecord(request.getTable(), request.getData());
-
-        // Synchronize vector in Qdrant if a product was added
-        if ("products".equalsIgnoreCase(request.getTable()) && response.getId() != null) {
-            try {
-                int pid = Integer.parseInt(response.getId().toString());
-                Product p = productJdbcDao.findProductById(pid);
-                if (p != null) {
-                    qdrantVectorService.upsertProduct(p);
-                }
-            } catch (Exception ignored) {}
-        }
         return ResponseEntity.ok(response);
     }
 
@@ -77,14 +57,6 @@ public class AdminDatabaseController {
             @Valid @RequestBody DeleteRecordRequest request) {
         checkAuthorization(apiKey);
         MutationResponse response = adminJdbcDao.deleteRecord(request.getTable(), request.getId());
-
-        // Remove vector from Qdrant if a product was deleted
-        if ("products".equalsIgnoreCase(request.getTable()) && request.getId() != null) {
-            try {
-                int pid = Integer.parseInt(request.getId().toString());
-                qdrantVectorService.deleteProduct(pid);
-            } catch (Exception ignored) {}
-        }
         return ResponseEntity.ok(response);
     }
 
@@ -98,17 +70,6 @@ public class AdminDatabaseController {
             @Valid @RequestBody UpdateRecordRequest request) {
         checkAuthorization(apiKey);
         MutationResponse response = adminJdbcDao.updateRecord(request.getTable(), request.getId(), request.getData());
-
-        // Update vector in Qdrant if a product was modified
-        if ("products".equalsIgnoreCase(request.getTable()) && request.getId() != null) {
-            try {
-                int pid = Integer.parseInt(request.getId().toString());
-                Product p = productJdbcDao.findProductById(pid);
-                if (p != null) {
-                    qdrantVectorService.upsertProduct(p);
-                }
-            } catch (Exception ignored) {}
-        }
         return ResponseEntity.ok(response);
     }
 

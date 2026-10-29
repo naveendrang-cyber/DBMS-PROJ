@@ -7,7 +7,7 @@
 1. **Frontend Presentation Tier:** A lightweight, high-performance web interface built with modern modular JavaScript and Vite, deployed on **Cloudflare Pages / Edge Infrastructure**.
 2. **Application & Business Logic Tier:** A **Java 17 / Spring Boot 3.3** RESTful API service running on a dedicated JVM runtime platform.
 3. **Data Access Layer:** Direct **Java JDBC (`java.sql.*`)** utilizing parameterized `PreparedStatement`, transaction demarcation with `setAutoCommit(false)`, `commit()`, and `rollback()`, managed by the **HikariCP** high-concurrency connection pool.
-4. **Relational Database Tier:** A normalized distributed schema deployed on **CockroachDB / PostgreSQL** (with zero-configuration offline **SQLite** fallback for local evaluation).
+4. **Relational Database Tier:** A normalized distributed schema deployed on **CockroachDB** (a local single-node cluster via `crdb-cli.cmd`, or CockroachDB Cloud).
 
 ---
 
@@ -38,8 +38,7 @@ flowchart TD
     end
 
     subgraph DatabaseTier["Distributed Database Layer"]
-        Cockroach["CockroachDB / PostgreSQL Cluster<br/>(Raft Consensus, Serializable MVCC)"]
-        FallbackDb["Local SQLite Fallback<br/>(Offline Grading &amp; Testing)"]
+        Cockroach["CockroachDB Cluster<br/>(Raft Consensus, Serializable MVCC)"]
     end
 
     Browser -->|HTTPS Request| CFPages

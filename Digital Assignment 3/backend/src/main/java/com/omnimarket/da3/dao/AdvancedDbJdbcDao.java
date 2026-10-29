@@ -32,8 +32,11 @@ public class AdvancedDbJdbcDao extends BaseJdbcDao {
         Connection conn = null;
         try {
             conn = dataSource.getConnection();
-            String dbProduct = conn.getMetaData().getDatabaseProductName();
-            resp.setDatabaseEngine(dbProduct);
+            try (Statement versionStmt = conn.createStatement();
+                 ResultSet rs = versionStmt.executeQuery("SELECT version()")) {
+                // e.g. "CockroachDB CCL v24.2.4 (x86_64-pc-windows-gnu, ...)" -> "CockroachDB CCL v24.2.4"
+                resp.setDatabaseEngine(rs.next() ? rs.getString(1).split(" \\(")[0] : conn.getMetaData().getDatabaseProductName());
+            }
 
             // STEP 1: Disable Auto-Commit
             conn.setAutoCommit(false);
@@ -41,7 +44,7 @@ public class AdvancedDbJdbcDao extends BaseJdbcDao {
 
             // STEP 2: Insert staging order
             int tempUserId = 4; // Vikram Singh
-            String insertOrderSql = "INSERT INTO orders (user_id, status, total_price) VALUES (?, 'testing_acid', ?)";
+            String insertOrderSql = "INSERT INTO orders (user_id, status, total_price) VALUES (?, 'pending', ?)";
             int testOrderId;
             try (PreparedStatement pstmt = conn.prepareStatement(insertOrderSql, Statement.RETURN_GENERATED_KEYS)) {
                 pstmt.setInt(1, tempUserId);
@@ -232,12 +235,37 @@ public class AdvancedDbJdbcDao extends BaseJdbcDao {
         String trimmed = query.trim().replaceAll(";+$", "");
         String explainSql = "EXPLAIN " + trimmed;
 
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(explainSql)) {
-            return mapResultSetToList(rs);
+        try (Connection conn = dataSource.getConnection()) {
+            beginReadOnly(conn);
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(explainSql)) {
+                return mapResultSetToList(rs);
+            } finally {
+                endReadOnly(conn);
+            }
         } catch (SQLException e) {
             throw new DatabaseOperationException("Execution plan analysis error: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The SQL console and EXPLAIN endpoints are public, so they run inside a READ ONLY
+     * transaction: CockroachDB rejects any write or DDL (including EXPLAIN ANALYZE of a write).
+     * Data changes go through the authenticated Professor interface instead.
+     */
+    private void beginReadOnly(Connection conn) throws SQLException {
+        conn.setAutoCommit(false);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("SET TRANSACTION READ ONLY");
+        }
+    }
+
+    private void endReadOnly(Connection conn) {
+        try {
+            conn.rollback();
+            conn.setAutoCommit(true);
+        } catch (SQLException e) {
+            logger.warn("Failed to reset read-only console connection: {}", e.getMessage());
         }
     }
 
@@ -255,54 +283,50 @@ public class AdvancedDbJdbcDao extends BaseJdbcDao {
             return resp;
         }
 
-        // Filter dangerous non-sandbox commands
-        String lower = raw.toLowerCase();
-        for (String restricted : List.of("attach", "detach", "load_extension", "system", "exec")) {
-            if (lower.contains(restricted)) {
-                resp.setSuccess(false);
-                resp.setError("Command '" + restricted + "' is restricted in educational SQL console.");
-                return resp;
+        try (Connection conn = dataSource.getConnection()) {
+            beginReadOnly(conn);
+            try (Statement stmt = conn.createStatement()) {
+                executeConsoleStatement(stmt, raw, start, resp);
+            } finally {
+                endReadOnly(conn);
             }
-        }
-
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
-
-            boolean isResultSet = stmt.execute(raw);
-            double elapsed = (System.currentTimeMillis() - start);
-
-            if (isResultSet) {
-                try (ResultSet rs = stmt.getResultSet()) {
-                    ResultSetMetaData meta = rs.getMetaData();
-                    int count = meta.getColumnCount();
-                    List<String> cols = new ArrayList<>();
-                    for (int i = 1; i <= count; i++) {
-                        cols.add(meta.getColumnLabel(i));
-                    }
-                    List<Map<String, Object>> rows = mapResultSetToList(rs);
-
-                    resp.setSuccess(true);
-                    resp.setColumns(cols);
-                    resp.setRows(rows);
-                    resp.setRowCount(rows.size());
-                    resp.setExecutionTime(elapsed);
-                }
-            } else {
-                int affected = stmt.getUpdateCount();
-                resp.setSuccess(true);
-                resp.setAffectedRows(affected);
-                resp.setRowCount(affected);
-                resp.setColumns(List.of("status", "affected_rows"));
-                resp.setRows(List.of(Map.of("status", "SUCCESS", "affected_rows", affected)));
-                resp.setMessage("Query executed successfully. Affected rows: " + affected);
-                resp.setExecutionTime(elapsed);
-            }
-
         } catch (SQLException e) {
             resp.setSuccess(false);
             resp.setError(e.getMessage());
             resp.setExecutionTime(System.currentTimeMillis() - start);
         }
         return resp;
+    }
+
+    private void executeConsoleStatement(Statement stmt, String raw, long start, SqlQueryResponse resp) throws SQLException {
+        boolean isResultSet = stmt.execute(raw);
+        double elapsed = (System.currentTimeMillis() - start);
+
+        if (isResultSet) {
+            try (ResultSet rs = stmt.getResultSet()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                int count = meta.getColumnCount();
+                List<String> cols = new ArrayList<>();
+                for (int i = 1; i <= count; i++) {
+                    cols.add(meta.getColumnLabel(i));
+                }
+                List<Map<String, Object>> rows = mapResultSetToList(rs);
+
+                resp.setSuccess(true);
+                resp.setColumns(cols);
+                resp.setRows(rows);
+                resp.setRowCount(rows.size());
+                resp.setExecutionTime(elapsed);
+            }
+        } else {
+            int affected = stmt.getUpdateCount();
+            resp.setSuccess(true);
+            resp.setAffectedRows(affected);
+            resp.setRowCount(affected);
+            resp.setColumns(List.of("status", "affected_rows"));
+            resp.setRows(List.of(Map.of("status", "SUCCESS", "affected_rows", affected)));
+            resp.setMessage("Query executed successfully. Affected rows: " + affected);
+            resp.setExecutionTime(elapsed);
+        }
     }
 }

@@ -54,14 +54,14 @@ export function createEditorialStory(onInspectDbClick) {
             </p>
           </div>
 
-          <!-- Card 3: Vector Database -->
+          <!-- Card 3: Distributed SQL -->
           <div class="manifesto-card">
             <div class="manifesto-card-header">
-              <span class="manifesto-card-icon">✨</span>
-              <h3 class="manifesto-card-title">Qdrant 384d Semantic Discovery</h3>
+              <span class="manifesto-card-icon">✦</span>
+              <h3 class="manifesto-card-title">CockroachDB Distributed SQL</h3>
             </div>
             <p class="manifesto-card-text">
-              Integrated with the official Qdrant REST API v1. FastEmbed ONNX creates 384-dimensional dense vectors to calculate nearest neighbors in Cosine space, enabling natural-language product discovery.
+              Every vendor, order, and payment lives in CockroachDB: Raft-replicated ranges, SERIALIZABLE isolation by default, and automatic client-side retry of conflicting checkouts (SQLSTATE 40001).
             </p>
           </div>
         </div>

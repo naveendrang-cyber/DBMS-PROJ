@@ -2,6 +2,7 @@ package com.omnimarket.da3;
 
 import com.omnimarket.da3.dao.AdminJdbcDao;
 import com.omnimarket.da3.dto.MutationResponse;
+import com.omnimarket.da3.exception.DatabaseOperationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -84,5 +85,33 @@ class AdminJdbcDaoTest {
         assertEquals("DELETE", resp.getOperation());
         assertEquals("products", resp.getTable());
         assertEquals(1, resp.getAffectedRows(), "Affected rows must be 1");
+    }
+
+    @Test
+    @Order(4)
+    @DisplayName("Unknown column names are rejected before SQL is built")
+    void testRejectsUnknownColumn() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("name = 'x' WHERE 1=1; --", "injected");
+
+        assertThrows(DatabaseOperationException.class, () -> adminJdbcDao.updateRecord("products", 1, data));
+        assertThrows(DatabaseOperationException.class, () -> adminJdbcDao.insertRecord("products", data));
+    }
+
+    @Test
+    @Order(5)
+    @DisplayName("String form values are coerced to numeric CockroachDB columns")
+    void testStringValuesCoerced() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("store_id", "1");
+        data.put("name", "Form Input Test Item");
+        data.put("price", "1299.50");
+        data.put("stock", "7");
+
+        MutationResponse resp = adminJdbcDao.insertRecord("products", data);
+        assertTrue(resp.isSuccess());
+        assertEquals(0, new BigDecimal("1299.50").compareTo((BigDecimal) resp.getRecord().get("price")));
+
+        adminJdbcDao.deleteRecord("products", resp.getId());
     }
 }

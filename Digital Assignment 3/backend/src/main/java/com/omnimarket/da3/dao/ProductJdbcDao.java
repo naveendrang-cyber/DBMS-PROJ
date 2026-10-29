@@ -87,19 +87,54 @@ public class ProductJdbcDao extends BaseJdbcDao {
     }
 
     /**
+     * Related products for the Quick View modal: same store first, then closest in price.
+     */
+    public List<Product> findRelatedProducts(int productId, int limit) {
+        String sql = """
+            SELECT p.id, p.store_id, p.name, p.price, p.stock, p.description,
+                   s.name AS store_name, s.city
+            FROM products p
+            JOIN stores s ON p.store_id = s.id
+            JOIN products target ON target.id = ?
+            WHERE p.id <> target.id
+            ORDER BY (p.store_id = target.store_id) DESC, abs(p.price - target.price) ASC, p.id ASC
+            LIMIT ?;
+        """;
+
+        List<Product> products = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, productId);
+            pstmt.setInt(2, Math.max(1, Math.min(limit, 12)));
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Product p = new Product();
+                    p.setId(rs.getInt("id"));
+                    p.setStoreId(rs.getInt("store_id"));
+                    p.setName(rs.getString("name"));
+                    p.setPrice(rs.getBigDecimal("price"));
+                    p.setStock(rs.getInt("stock"));
+                    p.setDescription(rs.getString("description"));
+                    p.setStoreName(rs.getString("store_name"));
+                    p.setCity(rs.getString("city"));
+                    products.add(p);
+                }
+            }
+            return products;
+        } catch (SQLException e) {
+            throw new DatabaseOperationException("Failed to fetch related products for " + productId + " via JDBC: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Deduct stock within an active JDBC transaction connection
      */
     public boolean deductStock(Connection conn, int productId, int qtyToDeduct) throws SQLException {
+        // FOR UPDATE takes a row lock in CockroachDB so concurrent checkouts queue on this product
         String checkSql = "SELECT stock FROM products WHERE id = ? FOR UPDATE";
         String updateSql = "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?";
 
-        // Note: For SQLite 'FOR UPDATE' is ignored or handled without locking syntax
-        boolean isPostgres = conn.getMetaData().getDatabaseProductName().toLowerCase().contains("postgres")
-                || conn.getMetaData().getDatabaseProductName().toLowerCase().contains("cockroach");
-
-        String selectQuery = isPostgres ? checkSql : "SELECT stock FROM products WHERE id = ?";
-
-        try (PreparedStatement checkStmt = conn.prepareStatement(selectQuery)) {
+        try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
             checkStmt.setInt(1, productId);
             try (ResultSet rs = checkStmt.executeQuery()) {
                 if (!rs.next()) {

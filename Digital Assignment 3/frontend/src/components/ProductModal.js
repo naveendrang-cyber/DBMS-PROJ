@@ -1,7 +1,7 @@
 /**
  * OMNI ATELIER — LUXURY PRODUCT DETAIL MODAL
  * Multi-angle image gallery, variant selection matrix, quantity stepper,
- * relational provenance accordions, and real-time Qdrant Nearest-Neighbor vector recommendations.
+ * relational provenance accordions, and related-product recommendations from CockroachDB.
  */
 
 import { api } from '../services/api.js';
@@ -97,18 +97,18 @@ export function createProductModal(onAddToCart, onProductSwitch) {
         </div>
       </div>
 
-      <!-- Qdrant Nearest-Neighbor Vectors Section -->
+      <!-- Related Products (CockroachDB JDBC query) -->
       <div class="modal-similar-section">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <h4 style="font-size:0.95rem; font-weight:700; color:var(--color-midnight); display:flex; align-items:center; gap:8px;">
-            <span>✨</span> Similar Artistry (Qdrant Nearest Neighbor Vectors)
+            <span>✦</span> Related Artistry
           </h4>
           <span style="font-size:0.75rem; color:var(--color-text-muted); font-family:var(--font-mono);">
-            Cosine Similarity Metric · 384d Space
+            Same atelier first · nearest price · CockroachDB
           </span>
         </div>
         <div id="modal-similar-container" class="similar-items-grid">
-          <p style="color:var(--color-text-muted); font-size:0.8125rem;">Querying Qdrant vector space for nearest neighbors...</p>
+          <p style="color:var(--color-text-muted); font-size:0.8125rem;">Loading related pieces from CockroachDB...</p>
         </div>
       </div>
     </div>
@@ -169,15 +169,15 @@ export function createProductModal(onAddToCart, onProductSwitch) {
     }
   });
 
-  // Load real-time Qdrant Nearest Neighbors
+  // Load related products (same store first, then closest price) via JDBC
   async function loadSimilar(product) {
     const container = modal.querySelector('#modal-similar-container');
     if (!container) return;
 
     try {
-      const hits = await api.getSimilarProducts(product.id, 3);
+      const hits = await api.getRelatedProducts(product.id, 3);
       if (!hits || hits.length === 0) {
-        container.innerHTML = '<p style="font-size:0.8125rem; color:var(--color-text-muted);">No vector neighbors returned.</p>';
+        container.innerHTML = '<p style="font-size:0.8125rem; color:var(--color-text-muted);">No related pieces found.</p>';
         return;
       }
 
@@ -198,7 +198,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
               <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
                 <span style="color:var(--color-emerald); font-weight:700; font-size:0.75rem;">${formattedPrice}</span>
                 <span class="badge badge-dark" style="font-size:0.6875rem; padding:2px 6px;">
-                  ✨ ${(hit.score * 100).toFixed(0)}% Vector Match
+                  ${hit.storeName || 'Atelier'}
                 </span>
               </div>
             </div>
@@ -216,7 +216,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
         container.appendChild(tile);
       });
     } catch (err) {
-      container.innerHTML = '<p style="font-size:0.8125rem; color:var(--color-text-muted);">Nearest neighbors calculated via 384d FastEmbed vector embeddings.</p>';
+      container.innerHTML = '<p style="font-size:0.8125rem; color:var(--color-text-muted);">Related pieces are unavailable right now.</p>';
     }
   }
 
@@ -299,7 +299,7 @@ export function createProductModal(onAddToCart, onProductSwitch) {
       specsContainer.appendChild(ul);
     }
 
-    // Load Qdrant Similar
+    // Load related products
     loadSimilar(product);
 
     modal.classList.add('open');

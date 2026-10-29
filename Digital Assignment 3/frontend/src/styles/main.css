@@ -961,33 +961,6 @@ button, input, select, textarea {
   box-shadow: 0 0 0 3px rgba(11, 31, 26, 0.08);
 }
 
-/* SEMANTIC AI PROMPT CHIPS */
-.semantic-chips-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
-}
-
-.semantic-chip {
-  background-color: rgba(23, 74, 58, 0.06);
-  color: var(--color-emerald);
-  border: 1px dashed rgba(23, 74, 58, 0.3);
-  border-radius: var(--radius-pill);
-  padding: 3px 10px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.semantic-chip:hover {
-  background-color: var(--color-emerald);
-  color: var(--color-white);
-  border-style: solid;
-}
-
 /* VIEW CONTROLS & SECONDARY TOOLBAR */
 .catalog-toolbar-sub {
   display: flex;
@@ -1403,7 +1376,7 @@ button, input, select, textarea {
   display: block;
 }
 
-/* SIMILAR PRODUCTS / QDRANT VECTORS IN MODAL */
+/* RELATED PRODUCTS IN MODAL */
 .modal-similar-section {
   border-top: 1px solid var(--color-border);
   padding-top: 24px;

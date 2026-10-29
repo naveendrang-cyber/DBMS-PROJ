@@ -19,6 +19,21 @@ const getBaseUrl = () => {
 
 const BASE_URL = getBaseUrl();
 
+// Resolves to null only when no backend is present: a network failure, or a non-JSON 404/405 from
+// a static host (the Cloudflare asset server answering /api/* itself). Any response from the real
+// API, including 4xx/5xx JSON errors, is returned as-is so real errors are shown instead of being
+// masked by the offline simulation.
+async function fetchOrNull(url, options) {
+  try {
+    const res = await fetch(url, options);
+    const isJson = res.headers.get('content-type')?.includes('application/json');
+    if (!isJson && (res.status === 404 || res.status === 405)) return null;
+    return res;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function handleResponse(res) {
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const data = isJson ? await res.json() : await res.text();
@@ -59,10 +74,11 @@ export const api = {
       if (res.ok) return await handleResponse(res);
     } catch (e) {}
     return {
-      status: 'UP',
-      engine: 'Direct JDBC (Localhost:8080 Active)',
-      driver: 'org.sqlite.JDBC / CockroachDB PostgreSQL',
-      message: 'Direct Java JDBC persistence engine'
+      status: 'offline',
+      database: 'disconnected',
+      engine: 'Offline catalog cache',
+      driver: 'CockroachDB (org.postgresql.Driver)',
+      message: 'Java Spring Boot backend not reachable'
     };
   },
 
@@ -105,22 +121,14 @@ export const api = {
 
   // Orders (Checkout Transaction via JDBC)
   async createOrder(checkoutData) {
-    try {
-      const res = await fetch(`${BASE_URL}/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(checkoutData),
-      });
-      // If the backend returned a successful order or a legitimate business error (e.g. 400 Bad Request)
-      if (res.ok) {
-        return await handleResponse(res);
-      }
-      if (res.status === 400) {
-        return await handleResponse(res); // Propagate business validation error for rollback display
-      }
-    } catch (netErr) {
-      console.warn("Direct Java Spring Boot host not reachable at /api/orders, engaging Edge ACID transaction simulation.", netErr);
-    }
+    const res = await fetchOrNull(`${BASE_URL}/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(checkoutData),
+    });
+    // Successful order, or a business error (e.g. rollback on insufficient stock) to display
+    if (res) return handleResponse(res);
+    console.warn("Java Spring Boot host not reachable at /api/orders, engaging Edge ACID transaction simulation.");
 
     // Edge ACID Demo Simulation (for Cloudflare Edge static deployments)
     let grandTotal = 0;
@@ -177,17 +185,16 @@ export const api = {
 
   // Dedicated Professor Database Actions (JDBC Direct)
   async adminInsert(table, data, apiKey = '') {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) headers['X-Admin-Key'] = apiKey;
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-Admin-Key'] = apiKey;
 
-      const res = await fetch(`${BASE_URL}/admin/insert`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ table, data }),
-      });
-      if (res.ok || res.status === 400) return await handleResponse(res);
-    } catch (e) {}
+    const res = await fetchOrNull(`${BASE_URL}/admin/insert`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ table, data }),
+    });
+    // Includes 401/403 (missing or wrong admin key) so they are never reported as success
+    if (res) return handleResponse(res);
 
     const newId = Math.floor(Math.random() * 500) + 100;
     return {
@@ -199,17 +206,16 @@ export const api = {
   },
 
   async adminDelete(table, id, apiKey = '') {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) headers['X-Admin-Key'] = apiKey;
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-Admin-Key'] = apiKey;
 
-      const res = await fetch(`${BASE_URL}/admin/delete`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ table, id }),
-      });
-      if (res.ok || res.status === 400) return await handleResponse(res);
-    } catch (e) {}
+    const res = await fetchOrNull(`${BASE_URL}/admin/delete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ table, id }),
+    });
+    // Includes 401/403 (missing or wrong admin key) so they are never reported as success
+    if (res) return handleResponse(res);
 
     return {
       success: true,
@@ -220,17 +226,16 @@ export const api = {
   },
 
   async adminUpdate(table, id, data, apiKey = '') {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) headers['X-Admin-Key'] = apiKey;
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-Admin-Key'] = apiKey;
 
-      const res = await fetch(`${BASE_URL}/admin/update`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ table, id, data }),
-      });
-      if (res.ok || res.status === 400) return await handleResponse(res);
-    } catch (e) {}
+    const res = await fetchOrNull(`${BASE_URL}/admin/update`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ table, id, data }),
+    });
+    // Includes 401/403 (missing or wrong admin key) so they are never reported as success
+    if (res) return handleResponse(res);
 
     return {
       success: true,
@@ -405,7 +410,7 @@ export const api = {
 
     return {
       query,
-      plan: `QUERY PLAN\n|--SCAN products USING COVERING INDEX (sqlite_autoindex_products_1)\n|--USE HASH JOIN (orders JOIN ordered_items ON order_id = orders.id)\n|--FILTER ON total_price > 5000\nExecution Engine: JDBC PreparedStatement Optimizer`
+      plan: `distribution: local\nvectorized: true\n\n• filter\n│ filter: total_price > 5000\n│\n└── • scan\n      table: orders@orders_pkey\n      spans: FULL SCAN\n(offline sample of CockroachDB EXPLAIN output)`
     };
   },
 
@@ -463,92 +468,20 @@ export const api = {
     };
   },
 
-  // Qdrant Vector Database Integration
-  async getQdrantStatus() {
+  // Related products (same store first, then closest price) via CockroachDB JDBC query
+  async getRelatedProducts(productId, limit = 4) {
     try {
-      const res = await fetch(`${BASE_URL}/qdrant/status`);
-      if (res.ok) return await handleResponse(res);
-    } catch (e) {}
-
-    return {
-      status: 'ok',
-      collectionName: 'omnimarket_products',
-      pointsCount: 36,
-      vectorSize: 384,
-      metric: 'Cosine',
-      model: 'BAAI/bge-small-en-v1.5'
-    };
-  },
-
-  async searchQdrant(query, limit = 6) {
-    try {
-      const res = await fetch(`${BASE_URL}/qdrant/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, limit }),
-      });
-      if (res.ok) return await handleResponse(res);
-    } catch (e) {}
-
-    // Simulated vector search with cosine similarity scoring
-    const terms = (query || '').toLowerCase().split(/\s+/);
-    const scored = BASELINE_PRODUCTS.map(p => {
-      let score = 0.65;
-      const text = `${p.name} ${p.description} ${p.storeName}`.toLowerCase();
-      terms.forEach(t => {
-        if (text.includes(t)) score += 0.12;
-      });
-      return {
-        id: p.id,
-        score: Math.min(0.98, score),
-        payload: {
-          productId: p.id,
-          name: p.name,
-          price: p.price,
-          description: p.description
-        }
-      };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
-  },
-
-  async getSimilarProducts(productId, limit = 4) {
-    try {
-      const res = await fetch(`${BASE_URL}/qdrant/similar/${productId}?limit=${limit}`);
+      const res = await fetch(`${BASE_URL}/products/${productId}/related?limit=${limit}`);
       if (res.ok) return await handleResponse(res);
     } catch (e) {}
 
     const target = BASELINE_PRODUCTS.find(p => p.id === Number(productId));
-    const others = BASELINE_PRODUCTS.filter(p => p.id !== Number(productId));
-    return others.slice(0, limit).map((p, idx) => ({
-      id: p.id,
-      score: 0.94 - idx * 0.05,
-      payload: {
-        productId: p.id,
-        name: p.name,
-        price: p.price,
-        description: p.description
-      }
-    }));
-  },
-
-  async syncQdrant(apiKey = '') {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) headers['X-Admin-Key'] = apiKey;
-      const res = await fetch(`${BASE_URL}/qdrant/sync`, {
-        method: 'POST',
-        headers,
-      });
-      if (res.ok) return await handleResponse(res);
-    } catch (e) {}
-
-    return {
-      status: 'success',
-      pointsSynced: 36,
-      message: 'Synchronized 36 product vector embeddings into Qdrant collection.'
-    };
+    return BASELINE_PRODUCTS
+      .filter(p => p.id !== Number(productId))
+      .sort((a, b) => {
+        const sameStore = Number(b.storeId === target?.storeId) - Number(a.storeId === target?.storeId);
+        return sameStore || Math.abs(a.price - (target?.price || 0)) - Math.abs(b.price - (target?.price || 0));
+      })
+      .slice(0, limit);
   },
 };

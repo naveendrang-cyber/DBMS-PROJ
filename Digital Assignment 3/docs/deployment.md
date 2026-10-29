@@ -33,7 +33,7 @@ mvn test
 # Start the Spring Boot application (Default port: 8080)
 mvn spring-boot:run
 ```
-*Note: The backend starts with an auto-initialized SQLite fallback database (`omnimarket_da3.db`) if no cloud database URL is supplied, allowing immediate evaluation.*
+*Note: The backend expects CockroachDB on `localhost:26257` by default. Start it first with `.\crdb-cli.cmd start` (and optionally `.\crdb-cli.cmd init`) from `Digital Assignment 3/`; on first start against an empty database the backend applies the schema and seed data itself.*
 
 ### 1.3 Start the Frontend Development Server
 Open a second PowerShell terminal:
@@ -107,7 +107,7 @@ A standard `Dockerfile` or native Maven buildpack will run the JAR artifact with
 | Parameter | Environment Variable | Example Value | Description |
 | :--- | :--- | :--- | :--- |
 | Server Port | `PORT` | `8080` | Port for incoming HTTP requests |
-| Database JDBC URL | `DB_URL` | `jdbc:postgresql://...` | Connection URL for CockroachDB or SQLite |
+| Database JDBC URL | `DB_URL` | `jdbc:postgresql://localhost:26257/omnimarket?sslmode=disable` | CockroachDB connection URL (local or Cloud) |
 | Database User | `DB_USER` | `harsh` | Database authentication username |
 | Database Password | `DB_PASSWORD` | `********` | Database authentication password |
 | Allowed CORS | `CORS_ALLOWED_ORIGINS` | `https://*.pages.dev,http://localhost:5173` | Origins allowed to make API calls |
@@ -126,7 +126,8 @@ A standard `Dockerfile` or native Maven buildpack will run the JAR artifact with
    {
      "status": "ok",
      "database": "connected",
-     "engine": "PostgreSQL" | "CockroachDB" | "SQLite",
+     "engine": "CockroachDB",
+     "version": "CockroachDB CCL v24.2.4 (...)",
      "driver": "PostgreSQL JDBC Driver (42.7.4)",
      "framework": "Java Spring Boot + Direct JDBC"
    }

@@ -1,7 +1,7 @@
 /**
  * OMNI ATELIER — INTERACTIVE PRODUCT CATALOG (THREEUI INSPIRED)
  * Elevated product discovery with multi-column layout switcher, functional category & attribute filters,
- * instant keyword search, and official Qdrant Vector Semantic AI search.
+ * instant keyword search, and a live CockroachDB connection indicator.
  */
 
 import { api } from '../services/api.js';
@@ -16,133 +16,71 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
   let allEnrichedProducts = (rawProducts || []).map(enrichProduct);
   let currentCategory = 'all';
   let searchQuery = '';
-  let isSemanticSearch = false;
-  let semanticHits = null;
-  let isSearching = false;
   let sortBy = 'featured';
   let viewMode = 'grid-4col';
   let filterInStockOnly = false;
   let selectedStore = 'all';
   let displayLimit = 16;
-  let isSyncing = false;
-  let syncMsg = '';
-  let qdrantStatus = null;
+  let dbHealth = null;
 
-  // Search debounce timer
-  let searchDebounceTimeout = null;
-
-  // Check initial Qdrant status
-  api.getQdrantStatus().then(st => {
-    qdrantStatus = st;
+  // Live relational engine status (GET /api/health)
+  api.getHealth().then(h => {
+    dbHealth = h;
     updateStatusPill();
   }).catch(() => {
-    qdrantStatus = { connection: 'offline', collection: 'omnimarket_products', pointsCount: 36 };
+    dbHealth = null;
     updateStatusPill();
   });
 
   function updateStatusPill() {
-    const pill = section.querySelector('#qdrant-status-pill');
+    const pill = section.querySelector('#db-status-pill');
     if (!pill) return;
-    if (qdrantStatus && (qdrantStatus.connection === 'connected' || qdrantStatus.status === 'ok')) {
+    if (dbHealth && dbHealth.database === 'connected') {
       pill.innerHTML = `
         <span class="pulse-dot"></span>
-        <span>Qdrant Vector DB: <strong>${qdrantStatus.collection || 'omnimarket_products'}</strong> (${qdrantStatus.pointsCount || allEnrichedProducts.length} vectors · 384d Cosine)</span>
+        <span>${dbHealth.engine || 'CockroachDB'}: <strong>live</strong> (${allEnrichedProducts.length} products via JDBC)</span>
       `;
       pill.className = 'badge badge-success';
     } else {
       pill.innerHTML = `
         <span class="pulse-dot amber"></span>
-        <span>Qdrant Vector DB: Local Mode (${allEnrichedProducts.length} vectors)</span>
+        <span>Offline catalog cache (${allEnrichedProducts.length} products)</span>
       `;
       pill.className = 'badge badge-gold';
     }
   }
 
-  async function performSemanticSearch() {
-    if (!searchQuery || searchQuery.trim().length < 2) {
-      semanticHits = null;
-      render();
-      return;
-    }
-
-    isSearching = true;
-    render();
-
-    try {
-      const hits = await api.searchQdrant(searchQuery.trim(), 12);
-      semanticHits = hits || [];
-    } catch (err) {
-      console.warn("Qdrant semantic search error:", err);
-      // Client-side fallback semantic scoring based on keyword relevance
-      semanticHits = allEnrichedProducts
-        .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.description || '').toLowerCase().includes(searchQuery.toLowerCase()))
-        .map((p, idx) => ({
-          id: p.id,
-          name: p.name,
-          price: p.price,
-          description: p.description,
-          score: Math.max(0.65, 0.95 - (idx * 0.05))
-        }));
-    } finally {
-      isSearching = false;
-      render();
-    }
-  }
-
   function getFilteredAndSortedProducts() {
-    let items = [];
+    // Relational attribute filtering
+    const items = allEnrichedProducts.filter(p => {
+      // Category filter
+      const matchesCategory = currentCategory === 'all' || p.category === currentCategory;
 
-    if (isSemanticSearch && semanticHits !== null) {
-      // Map Qdrant semantic hits back to enriched products
-      items = semanticHits.map(hit => {
-        const existing = allEnrichedProducts.find(p => p.id === hit.id);
-        if (existing) {
-          return { ...existing, _score: hit.score };
-        }
-        return enrichProduct({
-          id: hit.id,
-          name: hit.name,
-          price: hit.price,
-          description: hit.description,
-          storeId: 1,
-          storeName: hit.store_name || hit.storeName || 'Atelier Flagship',
-          city: hit.city || 'India',
-          stock: 12,
-          _score: hit.score
-        });
-      });
-    } else {
-      // Regular relational filtering
-      items = allEnrichedProducts.filter(p => {
-        // Category filter
-        const matchesCategory = currentCategory === 'all' || p.category === currentCategory;
+      // Keyword search filter
+      const query = searchQuery.toLowerCase().trim();
+      const matchesSearch = !query ||
+        p.name.toLowerCase().includes(query) ||
+        (p.description || '').toLowerCase().includes(query) ||
+        (p.storeName || '').toLowerCase().includes(query) ||
+        (p.city || '').toLowerCase().includes(query);
 
-        // Keyword search filter
-        const query = searchQuery.toLowerCase().trim();
-        const matchesSearch = !query ||
-          p.name.toLowerCase().includes(query) ||
-          (p.description || '').toLowerCase().includes(query) ||
-          (p.storeName || '').toLowerCase().includes(query) ||
-          (p.city || '').toLowerCase().includes(query);
+      // In-stock only filter
+      const matchesStock = !filterInStockOnly || p.stock > 0;
 
-        // In-stock only filter
-        const matchesStock = !filterInStockOnly || p.stock > 0;
+      // Store boutique filter
+      const matchesStore = selectedStore === 'all' || String(p.storeId) === String(selectedStore);
 
-        // Store boutique filter
-        const matchesStore = selectedStore === 'all' || String(p.storeId) === String(selectedStore);
+      return matchesCategory && matchesSearch && matchesStock && matchesStore;
+    });
 
-        return matchesCategory && matchesSearch && matchesStock && matchesStore;
-      });
-
-      // Sorting
-      items.sort((a, b) => {
-        if (sortBy === 'price-asc') return Number(a.price) - Number(b.price);
-        if (sortBy === 'price-desc') return Number(b.price) - Number(a.price);
-        if (sortBy === 'stock-desc') return b.stock - a.stock;
-        if (sortBy === 'rating-desc') return (b.rating || 0) - (a.rating || 0);
-        return a.id - b.id; // Default featured by ID
-      });
-    }
+    // Sorting
+    items.sort((a, b) => {
+      if (sortBy === 'price-asc') return Number(a.price) - Number(b.price);
+      if (sortBy === 'price-desc') return Number(b.price) - Number(a.price);
+      if (sortBy === 'stock-desc') return b.stock - a.stock;
+      if (sortBy === 'rating-desc') return (b.rating || 0) - (a.rating || 0);
+      return a.id - b.id; // Default featured by ID
+    });
 
     return items;
   }
@@ -160,29 +98,19 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
             <p class="section-eyebrow">02 / The Atelier Catalog</p>
             <h2 class="section-headline">Curated Artifacts &amp; Rare Curations</h2>
             <p class="section-subheadline">
-              Sourced from certified artisan workshops with 100% verified relational stock balances powered by Java JDBC and Qdrant.
+              Sourced from certified artisan workshops with 100% verified relational stock balances powered by Java JDBC and CockroachDB.
             </p>
           </div>
           <div style="display:flex; align-items:center; gap:10px;">
-            <div id="qdrant-status-pill" class="badge badge-gold" style="padding:6px 14px; font-size:0.75rem;">
-              Connecting to Qdrant...
+            <div id="db-status-pill" class="badge badge-gold" style="padding:6px 14px; font-size:0.75rem;">
+              Connecting to CockroachDB...
             </div>
-            <button id="catalog-sync-btn" class="btn btn-outline btn-sm" ${isSyncing ? 'disabled' : ''} title="Synchronize SQL database into Qdrant vector index">
-              ${isSyncing ? '🔄 Syncing...' : '🔄 Sync Vector Index'}
-            </button>
           </div>
         </div>
 
-        ${syncMsg ? `
-          <div style="margin-bottom:20px; padding:12px 18px; background:var(--color-success-bg); border:1px solid rgba(30,107,69,0.3); border-radius:var(--radius-sm); font-size:0.875rem; color:var(--color-success); display:flex; justify-content:space-between; align-items:center;">
-            <span>${syncMsg}</span>
-            <button id="dismiss-sync-msg" style="background:none; border:none; cursor:pointer; color:inherit; font-weight:700;">&times;</button>
-          </div>
-        ` : ''}
-
         <!-- Interactive Catalog Toolbar -->
         <div class="catalog-toolbar-card">
-          <!-- Top Row: Category Pills & AI Search Toggle -->
+          <!-- Top Row: Category Pills -->
           <div class="catalog-toolbar-top">
             <div class="category-pill-group">
               ${CATEGORIES.map(cat => {
@@ -199,12 +127,6 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
               }).join('')}
             </div>
 
-            <div class="catalog-toolbar-actions">
-              <!-- AI Search Toggle Button -->
-              <button id="toggle-semantic-btn" class="btn ${isSemanticSearch ? 'btn-emerald' : 'btn-outline'} btn-sm btn-pill">
-                ${isSemanticSearch ? '✨ Qdrant AI Search (Active)' : '✨ Switch to Qdrant AI'}
-              </button>
-            </div>
           </div>
 
           <!-- Middle Row: Search Input & Filter Controls -->
@@ -215,7 +137,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
                 type="text" 
                 id="catalog-search" 
                 class="search-input" 
-                placeholder="${isSemanticSearch ? 'Describe your intent in natural language (e.g., \"tactile aluminum keyboard for programming\", \"heavy wool sweater\")...' : 'Search by artifact title, material, boutique, or city...'}" 
+                placeholder="Search by artifact title, material, boutique, or city..." 
                 value="${searchQuery}" 
                 aria-label="Search catalog"
               />
@@ -236,37 +158,22 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
             </select>
           </div>
 
-          <!-- Semantic Prompt Suggestion Chips (Shown in AI Mode) -->
-          ${isSemanticSearch ? `
-            <div class="semantic-chips-row">
-              <span style="font-weight:600; color:var(--color-midnight);">Try conversational queries:</span>
-              <button class="semantic-chip" data-query="tactile mechanical keyboard for typing code">"tactile keyboard for typing code"</button>
-              <button class="semantic-chip" data-query="acoustic noise cancelling sound for travel">"noise cancelling sound for travel"</button>
-              <button class="semantic-chip" data-query="japanese raw selvedge denim jacket">"raw selvedge denim apparel"</button>
-              <button class="semantic-chip" data-query="handcrafted full grain leather travel bag">"handcrafted leather travel duffle"</button>
-              <button class="semantic-chip" data-query="precision machined brass writing pen">"machined brass fountain pen"</button>
-            </div>
-          ` : ''}
-
           <!-- Sub Toolbar: Results Count, Sort Dropdown & Layout Switcher -->
           <div class="catalog-toolbar-sub" style="margin-top:16px; padding-top:16px; border-top:1px solid var(--color-border);">
             <div class="results-count-text">
               Showing <strong>${visibleProducts.length}</strong> of <strong>${filteredProducts.length}</strong> curations
-              ${isSemanticSearch ? '<span style="color:var(--color-emerald); font-weight:600; margin-left:8px;">· Ordered by 384d Cosine Vector Similarity</span>' : ''}
             </div>
 
             <div class="filter-sort-controls">
               <!-- Sort Select -->
-              ${!isSemanticSearch ? `
-                <label for="catalog-sort-select" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--color-text-muted);">Sort By:</label>
-                <select id="catalog-sort-select" class="sort-select">
-                  <option value="featured" ${sortBy === 'featured' ? 'selected' : ''}>Featured / Curated</option>
-                  <option value="price-asc" ${sortBy === 'price-asc' ? 'selected' : ''}>Price: Low to High</option>
-                  <option value="price-desc" ${sortBy === 'price-desc' ? 'selected' : ''}>Price: High to Low</option>
-                  <option value="stock-desc" ${sortBy === 'stock-desc' ? 'selected' : ''}>Stock Availability</option>
-                  <option value="rating-desc" ${sortBy === 'rating-desc' ? 'selected' : ''}>Highest Patron Rating</option>
-                </select>
-              ` : ''}
+              <label for="catalog-sort-select" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--color-text-muted);">Sort By:</label>
+              <select id="catalog-sort-select" class="sort-select">
+                <option value="featured" ${sortBy === 'featured' ? 'selected' : ''}>Featured / Curated</option>
+                <option value="price-asc" ${sortBy === 'price-asc' ? 'selected' : ''}>Price: Low to High</option>
+                <option value="price-desc" ${sortBy === 'price-desc' ? 'selected' : ''}>Price: High to Low</option>
+                <option value="stock-desc" ${sortBy === 'stock-desc' ? 'selected' : ''}>Stock Availability</option>
+                <option value="rating-desc" ${sortBy === 'rating-desc' ? 'selected' : ''}>Highest Patron Rating</option>
+              </select>
 
               <!-- View Mode Switcher (ThreeUI Inspired) -->
               <div class="view-mode-toggle" role="group" aria-label="Layout View Switcher">
@@ -284,22 +191,13 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
           </div>
         </div>
 
-        <!-- Searching State Indicator -->
-        ${isSearching ? `
-          <div style="text-align:center; padding:48px; background:var(--color-ivory-warm); border-radius:var(--radius-sm); border:1px solid var(--color-border); margin-bottom:32px;">
-            <div class="pulse-dot" style="width:12px; height:12px; margin-bottom:12px;"></div>
-            <p style="font-family:var(--font-serif); font-size:1.25rem; color:var(--color-midnight);">Searching 384-dimensional Qdrant vector space...</p>
-            <p style="font-size:0.8125rem; color:var(--color-text-secondary); margin-top:4px;">Calculating Cosine similarities with ONNX BGE-small embeddings</p>
-          </div>
-        ` : ''}
-
         <!-- Product Grid Container -->
         <div class="product-grid ${viewMode}" id="catalog-grid">
           <!-- Populated dynamically -->
         </div>
 
         <!-- Empty State -->
-        ${visibleProducts.length === 0 && !isSearching ? `
+        ${visibleProducts.length === 0 ? `
           <div style="text-align:center; padding:64px 24px; background:var(--color-ivory-warm); border-radius:var(--radius-sm); border:1px dashed var(--color-border-dark);">
             <p style="font-family:var(--font-serif); font-size:1.75rem; color:var(--color-midnight); margin-bottom:8px;">No curations matched your criteria.</p>
             <p style="font-size:0.875rem; color:var(--color-text-secondary); max-width:480px; margin:0 auto 20px;">
@@ -310,7 +208,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
         ` : ''}
 
         <!-- Pagination / Incremental Loader -->
-        ${hasMore && !isSearching ? `
+        ${hasMore ? `
           <div style="text-align:center; margin-top:48px;">
             <button class="btn btn-outline btn-lg" id="load-more-btn">
               Load More Curations (${filteredProducts.length - visibleProducts.length} remaining) ↓
@@ -324,7 +222,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
 
     // Render Product Cards into Grid
     const grid = section.querySelector('#catalog-grid');
-    if (grid && visibleProducts.length > 0 && !isSearching) {
+    if (grid && visibleProducts.length > 0) {
       visibleProducts.forEach(product => {
         const card = document.createElement('div');
         card.className = 'product-card';
@@ -338,11 +236,6 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
           : (product.stock > 0
             ? `<span class="badge badge-gold">Only ${product.stock} Left</span>`
             : '<span class="badge badge-error">Sold Out</span>');
-
-        // Vector score badge (if semantic search active)
-        const scoreBadge = product._score !== undefined
-          ? `<span class="badge badge-dark">✨ ${(product._score * 100).toFixed(0)}% Vector Match</span>`
-          : '';
 
         card.innerHTML = `
           <!-- Product Media Container -->
@@ -363,13 +256,12 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
             <!-- Badge Overlay -->
             <div class="product-badge-overlay">
               ${stockBadge}
-              ${scoreBadge}
             </div>
 
             <!-- Quick View Hover Trigger -->
             <div class="product-quick-view-trigger">
               <button class="btn btn-primary btn-sm quick-view-btn" style="width:100%; box-shadow:0 4px 12px rgba(0,0,0,0.2);">
-                Quick View &amp; Similar Artistry
+                Quick View &amp; Related Artistry
               </button>
             </div>
           </div>
@@ -449,6 +341,7 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
 
     // Attach Event Listeners
     attachCatalogEventListeners();
+    updateStatusPill();
   }
 
   function attachCatalogEventListeners() {
@@ -456,61 +349,25 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
     section.querySelectorAll('.category-pill-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         currentCategory = btn.getAttribute('data-category');
-        isSemanticSearch = false;
-        semanticHits = null;
         displayLimit = 16;
         render();
       });
     });
-
-    // Semantic AI Toggle
-    const toggleSemanticBtn = section.querySelector('#toggle-semantic-btn');
-    if (toggleSemanticBtn) {
-      toggleSemanticBtn.addEventListener('click', () => {
-        isSemanticSearch = !isSemanticSearch;
-        semanticHits = null;
-        displayLimit = 16;
-        if (isSemanticSearch && searchQuery.trim().length >= 2) {
-          performSemanticSearch();
-        } else {
-          render();
-          const input = section.querySelector('#catalog-search');
-          if (input) input.focus();
-        }
-      });
-    }
 
     // Search Input
     const searchInput = section.querySelector('#catalog-search');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         searchQuery = e.target.value;
-        clearTimeout(searchDebounceTimeout);
-        if (isSemanticSearch) {
-          searchDebounceTimeout = setTimeout(() => {
-            performSemanticSearch();
-          }, 350);
-        } else {
-          render();
-          // Restore input focus and cursor
-          const newInput = section.querySelector('#catalog-search');
-          if (newInput) {
-            newInput.focus();
-            newInput.setSelectionRange(searchQuery.length, searchQuery.length);
-          }
+        render();
+        // Restore input focus and cursor
+        const newInput = section.querySelector('#catalog-search');
+        if (newInput) {
+          newInput.focus();
+          newInput.setSelectionRange(searchQuery.length, searchQuery.length);
         }
       });
     }
-
-    // Semantic suggestion chips
-    section.querySelectorAll('.semantic-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const query = chip.getAttribute('data-query');
-        searchQuery = query;
-        isSemanticSearch = true;
-        performSemanticSearch();
-      });
-    });
 
     // In Stock Only Checkbox
     const stockCb = section.querySelector('#stock-filter-checkbox');
@@ -555,8 +412,6 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
       resetBtn.addEventListener('click', () => {
         currentCategory = 'all';
         searchQuery = '';
-        isSemanticSearch = false;
-        semanticHits = null;
         filterInStockOnly = false;
         selectedStore = 'all';
         sortBy = 'featured';
@@ -574,34 +429,6 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
       });
     }
 
-    // Sync Button
-    const syncBtn = section.querySelector('#catalog-sync-btn');
-    if (syncBtn) {
-      syncBtn.addEventListener('click', async () => {
-        isSyncing = true;
-        syncMsg = 'Synchronizing SQL product records into Qdrant collection...';
-        render();
-        try {
-          const res = await api.syncQdrant();
-          syncMsg = `✅ Successfully indexed ${res.syncedToQdrant || allEnrichedProducts.length} products into Qdrant collection '${res.collection || 'omnimarket_products'}' in ${res.elapsedMs || 120}ms!`;
-          qdrantStatus = await api.getQdrantStatus();
-        } catch (err) {
-          syncMsg = `⚠️ Qdrant sync notification: ${err.message}`;
-        } finally {
-          isSyncing = false;
-          render();
-        }
-      });
-    }
-
-    // Dismiss sync message
-    const dismissBtn = section.querySelector('#dismiss-sync-msg');
-    if (dismissBtn) {
-      dismissBtn.addEventListener('click', () => {
-        syncMsg = '';
-        render();
-      });
-    }
   }
 
   // Initial render
@@ -615,14 +442,10 @@ export function createProductCatalog(rawProducts, onAddToCart, onQuickView) {
     },
     setCategory(catId) {
       currentCategory = catId;
-      isSemanticSearch = false;
-      semanticHits = null;
       render();
       section.scrollIntoView({ behavior: 'smooth' });
     },
-    activateSemanticSearch() {
-      isSemanticSearch = true;
-      render();
+    focusSearch() {
       const input = section.querySelector('#catalog-search');
       if (input) {
         input.focus();

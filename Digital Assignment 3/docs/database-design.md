@@ -23,13 +23,13 @@ erDiagram
 
 ### 2.1 Table: `roles`
 Stores access control roles within the multi-vendor marketplace.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `role_name` (VARCHAR(50) NOT NULL UNIQUE)
   - Values: `Administrator`, `Seller`, `Buyer`
 
 ### 2.2 Table: `users`
 Stores user identities, contact credentials, and membership status.
-- `user_id` (SERIAL PRIMARY KEY)
+- `user_id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `role_id` (INT NOT NULL, FK -> `roles.id` ON UPDATE CASCADE ON DELETE RESTRICT)
 - `first_name` (VARCHAR(50) NOT NULL)
 - `last_name` (VARCHAR(50) NOT NULL)
@@ -41,7 +41,7 @@ Stores user identities, contact credentials, and membership status.
 
 ### 2.3 Table: `sellers`
 Stores vendor merchant profiles linked to user accounts.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `user_id` (INT NOT NULL UNIQUE, FK -> `users.user_id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `store_name` (VARCHAR(100) NOT NULL)
 - `description` (TEXT)
@@ -50,7 +50,7 @@ Stores vendor merchant profiles linked to user accounts.
 
 ### 2.4 Table: `stores`
 Stores physical and virtual boutique storefront outlets operated by sellers.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `seller_id` (INT NOT NULL, FK -> `sellers.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `name` (VARCHAR(100) NOT NULL)
 - `rating` (NUMERIC(3,2) DEFAULT 5.00 CHECK (rating >= 0.0 AND rating <= 5.0))
@@ -60,7 +60,7 @@ Stores physical and virtual boutique storefront outlets operated by sellers.
 
 ### 2.5 Table: `products`
 Stores inventory items offered by stores.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `store_id` (INT NOT NULL, FK -> `stores.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `name` (VARCHAR(100) NOT NULL)
 - `price` (NUMERIC(10,2) NOT NULL CHECK (price >= 0.0))
@@ -69,14 +69,14 @@ Stores inventory items offered by stores.
 
 ### 2.6 Table: `orders`
 Stores customer sales orders.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `user_id` (INT NOT NULL, FK -> `users.user_id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `status` (VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'cancelled')))
 - `total_price` (NUMERIC(10,2) NOT NULL CHECK (total_price >= 0.0))
 
 ### 2.7 Table: `ordered_items`
 Stores line item details for each order.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `order_id` (INT NOT NULL, FK -> `orders.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `product_id` (INT NOT NULL, FK -> `products.id` ON UPDATE CASCADE ON DELETE RESTRICT)
 - `qty` (INT NOT NULL CHECK (qty > 0))
@@ -84,7 +84,7 @@ Stores line item details for each order.
 
 ### 2.8 Table: `payments`
 Stores financial settlement records for orders.
-- `pay_id` (SERIAL PRIMARY KEY)
+- `pay_id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `order_id` (INT NOT NULL UNIQUE, FK -> `orders.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `amount` (NUMERIC(10,2) NOT NULL CHECK (amount > 0.0))
 - `paid_at` (TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)
@@ -93,7 +93,7 @@ Stores financial settlement records for orders.
 
 ### 2.9 Table: `withdrawals`
 Stores seller revenue payout requests.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `seller_id` (INT NOT NULL, FK -> `sellers.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `amount` (NUMERIC(10,2) NOT NULL CHECK (amount > 0.0))
 - `status` (VARCHAR(30) DEFAULT 'pending' CHECK (status IN ('pending', 'under_review', 'completed', 'rejected')))
@@ -101,7 +101,7 @@ Stores seller revenue payout requests.
 
 ### 2.10 Table: `reviews`
 Stores customer feedback and product ratings.
-- `id` (SERIAL PRIMARY KEY)
+- `id` (INT8 PRIMARY KEY, DEFAULT nextval of its sequence)
 - `user_id` (INT NOT NULL, FK -> `users.user_id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `product_id` (INT NOT NULL, FK -> `products.id` ON UPDATE CASCADE ON DELETE CASCADE)
 - `comment` (TEXT NOT NULL)

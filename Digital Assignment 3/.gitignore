@@ -23,3 +23,6 @@ __pycache__/
 *.lock
 .DS_Store
 Thumbs.db
+
+# Local CockroachDB node data (crdb-cli.cmd start)
+database/crdb-data/

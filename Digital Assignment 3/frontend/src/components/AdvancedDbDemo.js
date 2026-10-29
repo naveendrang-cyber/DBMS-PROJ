@@ -265,7 +265,7 @@ ORDER BY total_products DESC, s.name ASC;</code></pre>
             Academic Course Note: Distributed vs. Local Environments
           </h4>
           <p style="font-size:0.875rem; color:var(--color-text-secondary); line-height:1.6;">
-            <strong>Distinguishing Live Tests from Conceptual Architecture:</strong> The JDBC transaction, commit, and rollback demonstrations run genuine code against the active database. When pointing to CockroachDB Cloud via <code>DB_URL</code>, the multi-node consensus occurs across distributed regions; when running locally via the offline SQLite fallback, the identical SQL syntax and JDBC transaction primitives ensure zero configuration setup for evaluators.
+            <strong>Distinguishing Live Tests from Conceptual Architecture:</strong> The JDBC transaction, commit, and rollback demonstrations run genuine code against the active database. Locally they run on a single-node CockroachDB cluster started with <code>crdb-cli.cmd start</code>; pointing <code>DB_URL</code> at a multi-node CockroachDB Cloud cluster runs the identical SQL and JDBC transaction code with Raft consensus across nodes.
           </p>
         </div>
       </div>

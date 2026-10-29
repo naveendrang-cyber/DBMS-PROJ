@@ -29,4 +29,14 @@ public class ProductController {
         }
         return ResponseEntity.ok(p);
     }
+
+    @GetMapping("/{id}/related")
+    public ResponseEntity<List<Product>> getRelatedProducts(
+            @PathVariable int id,
+            @RequestParam(defaultValue = "4") int limit) {
+        if (productJdbcDao.findProductById(id) == null) {
+            throw new ApiException(404, "Product with ID " + id + " not found.");
+        }
+        return ResponseEntity.ok(productJdbcDao.findRelatedProducts(id, limit));
+    }
 }

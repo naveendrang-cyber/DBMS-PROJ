@@ -23,11 +23,32 @@ public class OrderJdbcDao extends BaseJdbcDao {
     @Autowired
     private ProductJdbcDao productJdbcDao;
 
+    private static final int MAX_TRANSACTION_ATTEMPTS = 3;
+
     /**
-     * Executes multi-table checkout using explicit JDBC Transaction (ACID)
-     * Demonstrates setAutoCommit(false), commit(), and rollback()
+     * Executes multi-table checkout using explicit JDBC Transaction (ACID).
+     * CockroachDB runs every transaction at SERIALIZABLE isolation; when two checkouts conflict,
+     * one is aborted with SQLSTATE 40001 and must be retried by the client, which happens here.
      */
     public Order createOrderWithTransaction(CheckoutRequest req) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return runCheckoutTransaction(req);
+            } catch (SQLException e) {
+                if ("40001".equals(e.getSQLState()) && attempt < MAX_TRANSACTION_ATTEMPTS) {
+                    logger.warn("Serialization conflict on checkout (attempt {}/{}), retrying: {}",
+                            attempt, MAX_TRANSACTION_ATTEMPTS, e.getMessage());
+                    continue;
+                }
+                throw new DatabaseOperationException("Checkout transaction failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * One checkout attempt. Demonstrates setAutoCommit(false), commit(), and rollback().
+     */
+    private Order runCheckoutTransaction(CheckoutRequest req) throws SQLException {
         Connection conn = null;
         try {
             conn = dataSource.getConnection();
@@ -141,16 +162,18 @@ public class OrderJdbcDao extends BaseJdbcDao {
             order.setPayment(payment);
             return order;
 
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
+            // Roll back on every failure, including business-rule exceptions: otherwise the
+            // setAutoCommit(true) in finally would commit the partial order.
             if (conn != null) {
                 try {
-                    logger.warn("Transaction encountered SQLException. Performing JDBC rollback: {}", e.getMessage());
+                    logger.warn("Checkout transaction failed. Performing JDBC rollback: {}", e.getMessage());
                     conn.rollback();
                 } catch (SQLException rollbackEx) {
                     logger.error("Error during transaction rollback: {}", rollbackEx.getMessage());
                 }
             }
-            throw new DatabaseOperationException("Checkout transaction failed: " + e.getMessage(), e);
+            throw e;
         } finally {
             if (conn != null) {
                 try {
